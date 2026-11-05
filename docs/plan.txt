@@ -1,0 +1,161 @@
+PROJECT PLAN
+Decentralized Swarm Shape Formation via Differentiable Simulation
+CMSC 838B Final Project
+
+Goal: train one small neural policy, shared by every agent, that makes a 2D
+swarm form any target shape using only local information. Training
+backpropagates through a differentiable simulator (no RL, no hand-tuned rules),
+and the result is compared against classical and RL baselines and shown in a
+live browser demo.
+
+Schedule: Oct 15 - Dec 1, 2026, about 102 hours (~15 h/week).
+Fixed dates: Nov 17 progress report, Dec 17 course deadline.
+Detailed references: docs/Decentralized Swarm Shape Formation via
+Differentiable Simulation.md (project doc) and docs/Project Plan Phase 1.md.
+
+Phase overview
+  1. Setup and foundations        Oct 15 - Oct 21   12 h
+  2. Policy and training          Oct 22 - Nov 9    35 h
+  3. Baselines + progress report  Nov 10 - Nov 17   18 h
+  4. Experiments                  Nov 18 - Nov 24   20 h
+  5. Demo + write-up              Nov 25 - Dec 1    17 h
+
+
+==============================================================================
+PHASE 1. SETUP AND FOUNDATIONS (Oct 15 - Oct 21, 12 h)
+==============================================================================
+
+What we are trying to accomplish
+  Understand the method and prove that gradients flow through our own
+  simulator before any neural network is involved. Checkpoint: a toy
+  optimization moves 32 agents into a circle by backpropagating through the
+  simulator.
+
+How to achieve it
+  Read the four essential papers, learn the core concepts (state/observation/
+  policy, point-mass dynamics, backprop through time, Chamfer loss, gradient
+  stability), then build the smallest possible pipeline: simulator + shapes +
+  Chamfer loss. Optimize the raw acceleration sequence directly; if the
+  agents form the circle, the simulator, loss and autograd are correct.
+
+Steps
+  1. Read Batra et al., Back to Newton's Laws, Sun et al., DiffeoMorph;
+     one page of notes each.
+  2. Learn the concepts in docs/Project Plan Phase 1.md.
+  3. Set up the environment (uv, Python 3.11) and repo layout.
+  4. Write configs/default.yaml (dim, n_agents, dt, steps, damping, a_max, seed).
+  5. swarm/sim.py: differentiable step + rollout on [B, N, dim] tensors.
+  6. swarm/shapes.py: circle, square, line, polyline point clouds.
+  7. swarm/losses.py: Chamfer distance.
+  8. scripts/toy_optimize.py: optimize accelerations directly; save a GIF.
+  9. tests/: Chamfer, shapes, dynamics, gradcheck on step.
+  10. Commit, push, note one surprise for the progress report.
+
+Deliverables: paper notes, working simulator + tests, circle GIF.
+
+
+==============================================================================
+PHASE 2. POLICY AND TRAINING (Oct 22 - Nov 9, 35 h)
+==============================================================================
+
+What we are trying to accomplish
+  Replace the directly optimized accelerations with one shared, decentralized
+  neural policy that reliably forms target shapes from random starts
+  (success criterion 1: "it trains").
+
+How to achieve it
+  Build each agent's local observation (k nearest neighbors + m nearest
+  target points, as offsets relative to itself, plus its own velocity), feed
+  it to one shared MLP that outputs a bounded acceleration, and train end to
+  end by backpropagating the final-state loss through the whole rollout.
+  Add soft collision and effort penalties to the loss. Keep training stable
+  with damping, gradient clipping, truncated BPTT and a rollout-length
+  curriculum.
+
+Steps
+  1. Extend the simulator: batched random starts, random shape per batch,
+     policy called at each step.
+  2. swarm/observations.py: k-NN neighbor and target offsets (fixed size,
+     independent of N).
+  3. swarm/policy.py: shared MLP, a = a_max * tanh(output).
+  4. swarm/losses.py: add soft collision and control-effort penalties.
+  5. swarm/train.py + scripts/train.py: training loop (Adam, batching,
+     logging, checkpoints to runs/).
+  6. Debug gradient stability: clipping, truncated BPTT, curriculum on T;
+     tune loss weights.
+  7. Evaluate Chamfer error on training shapes; save GIFs to results/gifs/.
+
+Deliverables: trained policy checkpoint, training curves, shape-formation GIFs.
+
+
+==============================================================================
+PHASE 3. BASELINES + PROGRESS REPORT (Nov 10 - Nov 17, 18 h)
+==============================================================================
+
+What we are trying to accomplish
+  Have fair comparison points for the main claim and submit the Nov 17
+  progress report (needs Phase 2 done plus at least one baseline running).
+
+How to achieve it
+  Implement three baselines that cover the main alternatives, all running
+  in the same simulator and scored with the same metrics:
+    - Hungarian + PD: centralized assignment, upper bound on shape quality.
+    - Boids / potential field: hand-designed decentralized rules.
+    - PPO: reinforcement learning, tests "faster than RL".
+
+Steps
+  1. swarm/baselines/hungarian_pd.py (SciPy linear_sum_assignment + PD control).
+  2. swarm/baselines/potential_field.py (attract to shape, repel neighbors).
+  3. swarm/baselines/ppo.py: wrap the simulator as an RL environment; set up
+     PPO (Stable-Baselines3 or CleanRL) with the same observations.
+  4. Write the progress report in report/progress/.
+
+Deliverables: two classical baselines working, PPO training, progress report.
+
+
+==============================================================================
+PHASE 4. EXPERIMENTS (Nov 18 - Nov 24, 20 h)
+==============================================================================
+
+What we are trying to accomplish
+  Produce the evidence for success criteria 2 and 3: match or beat the
+  baselines, train faster than PPO, and show at least two decentralized
+  properties (scaling, self-healing, generalization).
+
+How to achieve it
+  Run every method on the same shapes, seeds and agent counts with
+  scripts/evaluate.py, and save the numbers and plots to results/.
+
+Steps
+  1. Finish and tune PPO so the comparison is fair.
+  2. Shape error: Chamfer on training shapes, all methods.
+  3. Scaling: train on N, test on 2N.
+  4. Robustness / self-healing: remove agents mid-rollout, measure recovery.
+  5. Generalization: error on shapes never seen in training.
+  6. Training efficiency: wall-clock time and samples to a target error vs PPO.
+  7. Make result tables and figures (results/figures/).
+
+Deliverables: result tables and figures for every experiment.
+
+
+==============================================================================
+PHASE 5. DEMO + WRITE-UP (Nov 25 - Dec 1, 17 h)
+==============================================================================
+
+What we are trying to accomplish
+  Show the trained policy running live in the browser (success criterion 4)
+  and write the final report. Dec 1 - Dec 17 is buffer.
+
+How to achieve it
+  Export the trained MLP to ONNX (or hand-port its weights to JS), run it in
+  the browser with onnxruntime-web, re-implement the simple point-mass step in
+  JavaScript, and draw the swarm with HTML Canvas. Host on GitHub Pages.
+
+Steps
+  1. scripts/export_onnx.py: export the policy to demo/models/.
+  2. demo/: simulator loop + Canvas drawing in JS.
+  3. Controls: shape selection, agent-count slider, click-to-remove agents.
+  4. Deploy to GitHub Pages (or Netlify).
+  5. Write the final report in report/final/ (LaTeX / Overleaf).
+
+Deliverables: live demo URL, final report.
