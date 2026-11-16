@@ -1,0 +1,203 @@
+PHASES EXPLAINED
+Decentralized Swarm Shape Formation via Differentiable Simulation
+
+What each phase does, why, and what every file is for.
+One section per phase. Add a new section when a phase starts.
+Diagrams: docs/architecture/
+
+
+==============================================================================
+PHASE 1. SETUP AND FOUNDATIONS
+==============================================================================
+
+------------------------------------------------------------------------------
+1. BIG PICTURE
+------------------------------------------------------------------------------
+
+Goal: prove that gradients flow through our own simulator before any neural
+network is involved.
+
+The test: 32 agents start at random positions. We do not use a policy.
+Instead, we directly optimize the full list of accelerations (every agent,
+every time step). We run the simulation, measure how far the final positions
+are from a circle, backpropagate that error through all 100 steps, and update
+the accelerations. Repeat 300 times.
+
+If the agents end up forming a circle, then three things are correct:
+  - the simulator is differentiable
+  - the shape loss is correct
+  - autograd connects the loss to the actions through every step
+
+Why do this first: in Phase 2 the accelerations come from a neural network.
+If training fails there, we will know the bug is in the network or the
+observations, not in the simulator or the loss.
+
+The pipeline:
+
+  raw params --tanh--> accelerations --sim.rollout--> final positions
+                                                           |
+  Adam <-- gradient (BPTT) <-- Chamfer loss vs circle <----+
+
+What exactly we optimize:
+  The accelerations. 32 drones x 100 steps x 2 directions (x, y) = 6,400
+  numbers: what each drone's motors do at each moment.
+
+  We store them as raw numbers r and compute a = a_max * tanh(r).
+    - tanh squashes any number into (-1, 1), so a always stays in [-2, 2].
+    - Each r gives exactly one a, so choosing r = choosing a.
+      r = 0 -> a = 0,  r = 1 -> a = 1.52,  r = 1000 -> a = 2 (never more).
+
+  Why a limit at all: a_max = 2 is the motor limit (max 2 units/s^2 in x
+  and in y). Without it the optimizer cheats: huge accelerations, and the
+  drones jump onto the circle in one frame. The box is 1 unit wide, so the
+  limit still leaves plenty of reach.
+
+  Why not optimize a directly and clip it:
+    - clamp(a, -2, 2) inside the sim gives 0 gradient past the limit, so
+      that action gets stuck. tanh always has a nonzero slope.
+    - Clipping after each Adam step would work for Phase 1.
+    - The real reason is Phase 2: the network's output goes through the
+      same a = a_max * tanh(output). Phase 1 tests that exact path. Only
+      the source of r changes:
+        Phase 1: r = 6,400 free numbers     -> tanh -> simulator
+        Phase 2: r = MLP(drone observation) -> tanh -> simulator
+
+
+------------------------------------------------------------------------------
+2. HOW EACH FILE HELPS
+------------------------------------------------------------------------------
+
+  configs/default.yaml       All settings in one place.                   [done]
+  swarm/config.py            Loads the YAML so code can use cfg.dt.       [done]
+  swarm/sim.py               The physics: moves agents one step at a      [done]
+                             time, differentiably.
+  swarm/shapes.py            Makes the target shape as a set of points.   [done]
+  swarm/losses.py            Measures how far agents are from the shape.  [todo]
+  swarm/viz.py               Turns a trajectory into a GIF.               [todo]
+  scripts/toy_optimize.py    Runs the whole test above.                   [todo]
+  tests/                     Checks each piece in isolation.              [todo]
+
+Order matters: the config and sim come first because everything else uses
+them. shapes and losses are independent of each other. toy_optimize ties
+everything together, so it comes last.
+
+
+------------------------------------------------------------------------------
+3. FILE BY FILE
+------------------------------------------------------------------------------
+
+--- configs/default.yaml -----------------------------------------------------
+
+  dim: 2         Spatial dimension (2D). Set to 3 later for 3D.
+  n_agents: 32   Number of agents N.
+  dt: 0.05       Seconds per simulation step.
+  steps: 100     Rollout length T. dt * steps = 5 seconds of motion.
+  damping: 0.5   Drag coefficient c. Slows agents down each step.
+  a_max: 2.0     Maximum acceleration. Actions are a_max * tanh(raw).
+  seed: 0        Random seed, so every run is repeatable.
+
+Why define them now:
+  - Every later phase uses the same simulator settings. If they lived inside
+    the code, the baselines and experiments could silently use different
+    values, and the comparisons would be unfair.
+  - One file per run means any result can be reproduced from its config.
+  - dim is a setting from day one, so switching to 3D is a one-line change.
+
+Why these values:
+  - dt * steps = 5 s gives agents enough time to cross the unit box.
+  - damping > 0 shrinks velocity a little each step. That keeps agents from
+    drifting forever and keeps gradients from exploding over 100 steps.
+  - a_max mimics real motor limits.
+
+--- swarm/config.py ----------------------------------------------------------
+
+  load_config(path) reads the YAML and returns an object with attribute
+  access (cfg.dt instead of cfg["dt"]). Every script calls it first.
+
+--- swarm/sim.py -------------------------------------------------------------
+
+What it does: moves every agent forward in time. All state tensors have
+shape [B, N, dim] (batch, agents, dimension).
+
+  step(pos, vel, acc, dt, damping)
+    One time step:
+      v_new = (1 - c*dt) * v + a * dt     acceleration changes velocity
+      p_new = p + v_new * dt              velocity changes position
+    Uses the NEW velocity to update position (semi-implicit Euler), which is
+    more stable than using the old one.
+
+  rollout(pos0, vel0, accs, cfg)
+    Calls step T times and returns the whole trajectory, shape
+    [B, T+1, N, dim]. We keep every frame (not just the last) because the
+    GIF needs all of them, and so will the Phase 2 collision penalty.
+
+Rules that keep it differentiable:
+  - Only PyTorch operations. No NumPy, no .item(), no .numpy() in the loop:
+    each of these cuts the gradient chain.
+  - No in-place ops (+=). Autograd needs the old values for the backward
+    pass.
+
+Check we ran: gradients reached every time step. Early actions get about
+37x larger gradients than the last one because they have more time to move
+the agent. Damping is what caps that ratio near 37 instead of 100.
+
+Phase 2 change: accs[:, t] is replaced by the policy's output at step t.
+
+--- swarm/shapes.py ----------------------------------------------------------
+
+What it does: makes the target shape as a set of points Q, shape [M, dim].
+A shape is just points, so the loss works the same for any shape.
+
+Conventions:
+  - The world is the box [-0.5, 0.5]. Every shape is centered at 0 and
+    scaled so its larger side is EXTENT = 0.8, leaving a 0.1 margin.
+  - We use M = 2N = 64 points so the shape is densely described.
+  - For dim = 3 the shape lies flat at z = 0.
+
+  sample_shape(name, m, dim, vertices=None, closed=False)
+    circle    q_j = 0.4 (cos(2 pi j/m), sin(2 pi j/m)), evenly spaced angles
+    square    closed polyline through the 4 corners
+    line      open polyline, 2 endpoints
+    polyline  any vertex list (letters, user drawings); closed=True joins
+              the end back to the start
+
+  sample_polyline(vertices, m, closed)
+    Places m points evenly by ARC LENGTH along the whole outline, not per
+    edge. So a long edge gets more points than a short one and the shape is
+    covered uniformly. How: add up segment lengths, pick m evenly spaced
+    distances along the total, and interpolate inside the segment each one
+    falls in. A closed shape stops one gap short, so the last point does
+    not duplicate the first.
+
+  normalize(points)
+    Centers the bounding box and scales its larger side to 0.8, so a
+    user-drawn shape of any size fits the box.
+
+Check we ran: every shape gives 64 points within [-0.4, 0.4]. Spacing is
+even (circle 0.039, square 0.050, line 0.013). For the letter L, points are
+evenly spaced along the outline; only the jump across the corner is shorter.
+
+Why this matters later: Phase 2 samples a random shape per batch, and
+Phase 4 tests on unseen shapes. Both just call sample_shape.
+
+--- swarm/losses.py ----------------------------------------------------------
+  [to fill in when written]
+
+--- swarm/viz.py -------------------------------------------------------------
+  [to fill in when written]
+
+--- scripts/toy_optimize.py --------------------------------------------------
+  [to fill in when written]
+
+--- tests/ -------------------------------------------------------------------
+  [to fill in when written]
+
+
+------------------------------------------------------------------------------
+4. DONE WHEN
+------------------------------------------------------------------------------
+
+  [ ] The toy optimization's loss drops close to zero
+  [ ] A GIF of 32 agents forming a circle is saved in results/gifs/
+  [ ] All tests pass (uv run pytest)
+  [ ] One surprise is written down for the progress report

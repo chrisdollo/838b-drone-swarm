@@ -1,0 +1,8 @@
+# Phase 1 settings. Every run loads one of these files so it can be reproduced.
+dim: 2          # spatial dimension; set to 3 later for 3D
+n_agents: 32    # N
+dt: 0.05        # seconds per step
+steps: 100      # rollout length T (dt * steps = 5 s of motion)
+damping: 0.5    # c in v_{t+1} = (1 - c*dt) v_t + a_t dt
+a_max: 2.0      # max acceleration; actions are a_max * tanh(raw)
+seed: 0
