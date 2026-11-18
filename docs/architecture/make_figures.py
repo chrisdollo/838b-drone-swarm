@@ -129,10 +129,10 @@ def overview():
     phases = [
         ("Phase 1", "Setup + foundations", "Oct 15–21 · 12 h", "hands off: diff. sim + loss", [
             ("sim.py", "point-mass step + rollout", True),
-            ("shapes.py", "circle, square, line, polyline", False),
-            ("losses.py", "Chamfer distance", False),
-            ("toy_optimize.py", "optimise accelerations", False),
-            ("tests/", "gradcheck, shapes, loss", False)]),
+            ("shapes.py", "circle, square, line, polyline", True),
+            ("losses.py", "Chamfer distance", True),
+            ("toy_optimize.py", "optimise accelerations", True),
+            ("tests/", "gradcheck, shapes, loss", True)]),
         ("Phase 2", "Policy + training", "Oct 22 – Nov 9 · 35 h", "hands off: trained policy", [
             ("observations.py", "k-NN neighbours + targets", False),
             ("policy.py", "shared MLP, tanh output", False),
@@ -188,14 +188,14 @@ def phase1():
                [r"$v \leftarrow (1-c\,\Delta t)\,v + a\,\Delta t$", r"$p \leftarrow p + v\,\Delta t$",
                 "no in-place ops, no .item()"], color=c, done=True)
     shp = box(ax, 12.2, 6.4, 3.4, 1.4, "shapes.sample_shape",
-              ["'circle', M = 2N = 64 points", "centred, fits the unit box"], color=c, title_size=10.8)
+              ["'circle', M = 2N = 64 points", "centred, fits the unit box"], color=c, title_size=10.8, done=True)
     loss = box(ax, 12.2, 3.8, 3.4, 1.6, "losses.chamfer",
-               [r"$L = \mathrm{CD}(p_T,\ Q)$", "agents→shape + shape→agents"], color=c)
-    adam = box(ax, 0.4, 2.0, 3.4, 1.2, "torch.optim.Adam", ["lr 0.05 · 300 iterations"], color=c)
-    box(ax, 7.5, 0.35, 4.2, 1.15, "viz.py", ["scatter per step → results/gifs/"], color=c)
+               [r"$L = \mathrm{CD}(p_T,\ Q)$", "agents→shape + shape→agents"], color=c, done=True)
+    adam = box(ax, 0.4, 2.0, 3.4, 1.2, "torch.optim.Adam", ["lr 0.05, cosine decay · 300 iters"], color=c, done=True)
+    box(ax, 7.5, 0.35, 4.2, 1.15, "viz.py", ["scatter per step → results/gifs/"], color=c, done=True)
     box(ax, 0.4, 0.35, 6.6, 1.15, "tests/",
         ["chamfer(P, P) = 0 and symmetric · shapes stay in the box",
-         "constant velocity when a = c = 0 · gradcheck(step) in float64"], color=c)
+         "constant velocity when a = c = 0 · gradcheck(step) in float64"], color=c, done=True)
 
     arrow(ax, [raw["r"], act["l"]])
     arrow(ax, [act["r"], (step["x"], act["r"][1])], label="a", label_at=(7.25, 4.6))

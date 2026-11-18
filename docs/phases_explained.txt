@@ -72,10 +72,10 @@ What exactly we optimize:
   swarm/sim.py               The physics: moves agents one step at a      [done]
                              time, differentiably.
   swarm/shapes.py            Makes the target shape as a set of points.   [done]
-  swarm/losses.py            Measures how far agents are from the shape.  [todo]
-  swarm/viz.py               Turns a trajectory into a GIF.               [todo]
-  scripts/toy_optimize.py    Runs the whole test above.                   [todo]
-  tests/                     Checks each piece in isolation.              [todo]
+  swarm/losses.py            Measures how far agents are from the shape.  [done]
+  swarm/viz.py               Turns a trajectory into a GIF.               [done]
+  scripts/toy_optimize.py    Runs the whole test above.                   [done]
+  tests/                     Checks each piece in isolation.              [done]
 
 Order matters: the config and sim come first because everything else uses
 them. shapes and losses are independent of each other. toy_optimize ties
@@ -181,23 +181,110 @@ Why this matters later: Phase 2 samples a random shape per batch, and
 Phase 4 tests on unseen shapes. Both just call sample_shape.
 
 --- swarm/losses.py ----------------------------------------------------------
-  [to fill in when written]
+
+What it does: scores how well the agents cover the shape.
+
+  chamfer(P, Q)
+    P: agents [B, N, dim]. Q: targets [B, M, dim] or [M, dim].
+    D[i, j] = ||p_i - q_j||^2 for every agent/target pair, then
+      A = mean over agents of (distance to nearest target)   no stragglers
+      B = mean over targets of (distance to nearest agent)   no gaps
+      L = A + B, averaged over the batch.
+    No agent is assigned a target; each min picks the nearest one right now.
+    Both terms are needed: with A alone, all agents can pile onto one point.
+
+  pairwise_sq_dist(P, Q)
+    Builds D from coordinate differences instead of torch.cdist(P, Q) ** 2.
+    cdist takes a square root and we would square it again; the square root
+    has an infinite slope at distance 0 (agent exactly on a target point).
+    This form is exact and smooth everywhere.
+
+Phase 2 adds the collision and effort penalties to this file.
 
 --- swarm/viz.py -------------------------------------------------------------
-  [to fill in when written]
+
+What it does: turns results into pictures. No gradients needed, so tensors
+are detached first.
+
+  save_gif(traj, Q, path)    One rollout as a GIF: target points as hollow
+                             circles, agents as dots, a step counter. Holds the
+                             last frame for 1 s before looping.
+  plot_loss(history, path)   Loss per iteration on a log scale, with an
+                             optional "best possible" reference line.
 
 --- scripts/toy_optimize.py --------------------------------------------------
-  [to fill in when written]
+
+What it does: runs the whole Phase 1 test.
+  uv run python -m scripts.toy_optimize            (circle)
+  uv run python -m scripts.toy_optimize --shape square
+
+  1. Random start positions in the box, zero velocity, B = 1.
+  2. raw = zeros [1, T, N, 2], requires_grad. Adam, lr 0.05.
+  3. 300 times: a = a_max * tanh(raw) -> rollout -> chamfer(final, circle)
+     -> backward -> Adam step -> lr schedule step.
+  4. Prints the loss every 10 iterations, then saves
+     results/gifs/toy_<shape>.gif and results/figures/toy_<shape>_loss.png.
+
+Result: circle loss 0.033 -> 0.00065 in 0.7 s. Best possible is ~0.00058.
+Square: 0.031 -> 0.0011.
+
+The learning rate decays to 0 (cosine schedule). Without it the run fails;
+see "Surprise" below.
 
 --- tests/ -------------------------------------------------------------------
-  [to fill in when written]
+
+Run: uv run pytest   (25 tests, about 2 s)
+
+  test_sim.py      rollout output shape; constant velocity when a = c = 0;
+                   velocity decays as lambda^t without thrust; final position
+                   equals the closed form p_0 + sum w_s a_s; gradcheck on step.
+  test_shapes.py   right point count, inside the box; circle radius 0.4;
+                   even spacing on closed shapes; polyline normalized to 0.8;
+                   3D lies flat; unknown name raises.
+  test_losses.py   chamfer(P, P) = 0; symmetric; worked example = 0.26;
+                   collapsing onto one point is penalized; gradcheck.
+
+gradcheck compares autograd's gradient to a finite-difference estimate in
+float64. If they agree, the backward pass is correct.
+
+pyproject.toml got a [tool.pytest.ini_options] block so tests can import
+swarm from the repo root.
+
+
+------------------------------------------------------------------------------
+SURPRISE (for the progress report)
+------------------------------------------------------------------------------
+
+1. A constant learning rate breaks the toy optimization.
+   With Adam at lr 0.05 the loss reaches 0.00062 by iteration ~185, then
+   climbs back to 0.027 by iteration 300. Saturation is not the cause
+   (|raw| stays below 0.1). Adam steps every parameter by about lr however
+   small its gradient is. One aligned step can move a final position by up
+   to a_max * lr * sum(w_s) = 2 * 0.05 * 6.41 = 0.64 units, while the
+   target points are 0.04 apart. Near the optimum the agents keep
+   overshooting.
+     constant lr 0.05:  best 0.00062, final 0.027
+     constant lr 0.01:  final 0.00078 (stable, slower)
+     cosine from 0.05:  final 0.00065 (stable)  <- used
+   The same effect causes the loss spike to ~0.3 in the first iterations.
+
+2. The best loss is not 0, and the best spot is not on a target point.
+   With M = 2N, each agent covers two points a spacing s apart. Sitting a
+   quarter of the way between them gives A = s^2/16, B = 5 s^2/16, so
+   L = 3/8 s^2 = 0.00058. The optimizer reaches 0.00065.
+
+3. Agents arrive only at the end. The loss scores only the final positions,
+   so at step 50 the swarm is still scattered. Phase 2 can add a loss on
+   intermediate steps if earlier arrival is wanted.
 
 
 ------------------------------------------------------------------------------
 4. DONE WHEN
 ------------------------------------------------------------------------------
 
-  [ ] The toy optimization's loss drops close to zero
-  [ ] A GIF of 32 agents forming a circle is saved in results/gifs/
-  [ ] All tests pass (uv run pytest)
-  [ ] One surprise is written down for the progress report
+  [x] The toy optimization's loss drops close to its minimum (0.00065 vs 0.00058)
+  [x] A GIF of 32 agents forming a circle is saved in results/gifs/
+  [x] All tests pass (uv run pytest, 25 tests)
+  [x] Surprises are written down for the progress report (above)
+  [ ] README: how to run the toy script, with the GIF
+  [ ] Commit and push
