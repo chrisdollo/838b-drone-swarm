@@ -41,7 +41,7 @@ def close_pairs(P: torch.Tensor, d_min) -> torch.Tensor:
 
 # --- Phase 2 ------------------------------------------------------------------
 
-def shape_loss(traj: torch.Tensor, Q: torch.Tensor, hold_frac: float = 0.0) -> torch.Tensor:
+def shape_loss(traj: torch.Tensor, Q: torch.Tensor, hold_frac: float = 0.0, per_scene: bool = False):
     """Chamfer averaged over the last hold_frac of the rollout (just the final frame if 0).
 
     traj: [B, T+1, N, dim]. Scoring several final frames makes the policy
@@ -52,11 +52,12 @@ def shape_loss(traj: torch.Tensor, Q: torch.Tensor, hold_frac: float = 0.0) -> t
     P = traj[:, -n:].reshape(B * n, N, dim)
     if Q.dim() == 2:
         Q = Q.expand(B, -1, -1)
-    return chamfer(P, Q.repeat_interleave(n, dim=0))
+    c = chamfer(P, Q.repeat_interleave(n, dim=0), per_scene=True).reshape(B, n).mean(dim=1)
+    return c if per_scene else c.mean()
 
 
-def collision_loss(traj: torch.Tensor, d_min) -> torch.Tensor:
-    """Soft collision penalty, averaged over steps, agents and batch.
+def collision_loss(traj: torch.Tensor, d_min, per_scene: bool = False):
+    """Soft collision penalty, averaged over steps and agents (and batch unless per_scene).
 
     For every pair closer than d_min: (d_min - distance)^2, zero otherwise.
     Smooth, so it has useful gradients (a hard "collided yes/no" has none).
@@ -69,7 +70,8 @@ def collision_loss(traj: torch.Tensor, d_min) -> torch.Tensor:
     d_min = torch.as_tensor(d_min, dtype=traj.dtype, device=traj.device)
     if d_min.dim() == 1:                                          # per scene -> per frame
         d_min = d_min.repeat_interleave(T1 - 1).reshape(-1, 1, 1)
-    return (torch.relu(d_min - d) ** 2 * off_diag).sum(dim=2).mean()
+    pen = (torch.relu(d_min - d) ** 2 * off_diag).sum(dim=2).mean(dim=1).reshape(B, T1 - 1).mean(dim=1)
+    return pen if per_scene else pen.mean()
 
 
 def effort_loss(accs: torch.Tensor) -> torch.Tensor:
@@ -77,13 +79,17 @@ def effort_loss(accs: torch.Tensor) -> torch.Tensor:
     return (accs ** 2).sum(dim=-1).mean()
 
 
-def total_loss(traj, accs, Q, lcfg):
-    """Weighted Phase 2 loss. lcfg: the `loss` section of the config.
+def total_loss(traj, accs, Q, d_min, lcfg, d_min_frac: float = 0.4):
+    """Weighted Phase 2 loss. d_min: [B] collision distance per scene; lcfg: the `loss` config section.
 
+    Shape and collision are divided by each scene's squared drone spacing
+    s^2 = (d_min / d_min_frac)^2. Both scale with s^2, so without this the
+    sparse 8-drone scenes would outweigh the dense 64-drone ones ~30x.
     Returns (loss tensor, dict of each term as a float for logging).
     """
-    shape = shape_loss(traj, Q, lcfg.hold_frac)
-    coll = collision_loss(traj, lcfg.d_min)
+    s2 = (d_min / d_min_frac) ** 2
+    shape = (shape_loss(traj, Q, lcfg.hold_frac, per_scene=True) / s2).mean()
+    coll = (collision_loss(traj, d_min, per_scene=True) / s2).mean()
     effort = effort_loss(accs)
     loss = shape + lcfg.w_collision * coll + lcfg.w_effort * effort
     return loss, {"shape": shape.item(), "collision": coll.item(), "effort": effort.item()}

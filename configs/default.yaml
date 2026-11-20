@@ -1,8 +1,8 @@
-# Every run loads one of these files so it can be reproduced.
+# Every run loads this file so it can be reproduced.
 
 # --- Phase 1: simulator -------------------------------------------------------
-dim: 2          # spatial dimension; set to 3 later for 3D
-n_agents: 32    # N
+dim: 2          # spatial dimension
+n_agents: 32    # N for the Phase 1 toy optimization (Phase 2 uses the grid in swarm/dataset.py)
 dt: 0.05        # seconds per step
 steps: 100      # rollout length T (dt * steps = 5 s of motion)
 damping: 0.5    # c in v_{t+1} = (1 - c*dt) v_t + a_t dt
@@ -11,21 +11,22 @@ seed: 0
 device: cpu     # cpu | mps (Apple GPU) | cuda. CPU is about as fast at this size.
 
 # --- Phase 2: policy, loss, training -----------------------------------------
+# The drones x goals grid, shape families and collision distance
+# (d_min = 0.4 x drone spacing, per scene) live in swarm/dataset.py.
 policy:
-  k_neighbors: 6     # nearest other agents each agent sees
-  m_targets: 8       # nearest target points each agent sees
+  k_neighbors: 6     # nearest other drones each drone sees
+  m_targets: 8       # nearest goal points each drone sees (with "is it taken?")
   hidden: 64         # width of each hidden layer
   layers: 2          # number of hidden layers
-  pos_scale: 10.0    # offsets are multiplied by this before the MLP (they are ~0.01-1)
+  pos_scale: 10.0    # distances (~0.01-1) are multiplied by this before the MLP
 
-loss:
-  hold_frac: 0.2     # shape loss averaged over the last 20% of steps, not just the final one
-  w_collision: 10.0  # soft penalty for pairs closer than d_min, over all steps
-  d_min: 0.02        # collision distance (32 agents on a 0.8 line are 0.026 apart)
-  w_effort: 0.0001   # penalty on mean ||a||^2
+loss:                # shape and collision are divided by each scene's spacing^2
+  hold_frac: 0.2     # shape loss averaged over the last 20% of steps
+  w_collision: 10.0  # soft penalty for pairs closer than the scene's d_min
+  w_effort: 0.01     # penalty on mean ||a||^2
 
 train:
-  batch_size: 32     # scenes per iteration, each with its own random start and shape
+  batch_size: 32     # scenes per iteration, all from one randomly chosen grid cell
   iters: 3000
   lr: 0.003          # Adam; cosine decay to lr_min (Phase 1 lesson)
   lr_min: 0.0003
@@ -35,6 +36,4 @@ train:
     - [0, 40]
     - [500, 70]
     - [1000, 100]
-  val_every: 100
-  val_scenes: 64     # fixed validation scenes (own seed), always at full T
-  val_seed: 1234
+  val_every: 250     # score the benchmark (train shapes) against its per-scene optimum

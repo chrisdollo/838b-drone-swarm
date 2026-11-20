@@ -131,25 +131,25 @@ def overview():
             ("sim.py", "point-mass step + rollout", True),
             ("shapes.py", "circle, square, line, polyline", True),
             ("losses.py", "Chamfer distance", True),
-            ("toy_optimize.py", "optimise accelerations", True),
+            ("plan.py", "optimise accelerations", True),
             ("tests/", "gradcheck, shapes, loss", True)]),
         ("Phase 2", "Policy + training", "Oct 22 – Nov 9 · 35 h", "hands off: trained policy", [
-            ("observations.py", "k-NN neighbours + targets", False),
-            ("policy.py", "shared MLP, tanh output", False),
-            ("losses.py", "+ collision, + effort", False),
-            ("train.py", "BPTT, clipping, curriculum", False)]),
+            ("observations.py", "k-NN + goal occupancy", True),
+            ("policy.py", "shared MLP, tanh output", True),
+            ("dataset.py", "drones × goals grid, benchmark", True),
+            ("train.py", "BPTT, clipping, curriculum", True)]),
         ("Phase 3", "Baselines + report", "Nov 10–17 · 18 h", "hands off: 3 baselines", [
             ("hungarian_pd.py", "assignment + PD control", False),
             ("potential_field.py", "attract + repel rules", False),
             ("ppo.py", "RL env + PPO", False),
             ("report/progress/", "progress report, Nov 17", False)]),
         ("Phase 4", "Experiments", "Nov 18–24 · 20 h", "hands off: results", [
-            ("evaluate.py", "all methods, same seeds", False),
+            ("phase4.ipynb", "all methods, same benchmark", False),
             ("metrics.py", "one set of metrics", False),
             ("5 experiments", "error, scale, heal, unseen, speed", False),
             ("results/", "figures + tables", False)]),
         ("Phase 5", "Demo + write-up", "Nov 25 – Dec 1 · 17 h", "delivers: demo + report", [
-            ("export_onnx.py", "policy → ONNX", False),
+            ("phase5.ipynb", "export policy → ONNX", False),
             ("demo/", "JS sim + Canvas + controls", False),
             ("GitHub Pages", "live demo URL", False),
             ("report/final/", "LaTeX final report", False)]),
@@ -218,26 +218,26 @@ def phase2():
                       "backpropagated through every step into θ")
     group(ax, 4.3, 3.4, 11.3, 5.6, "one rollout · repeat T steps, policy called every step", c)
     batch = box(ax, 0.4, 7.0, 3.5, 1.7, "batch setup",
-                ["random starts p0  [B, N, 2]", "v0 = 0", "random shape per batch Q"], color=c)
+                ["cell (N, M) from the grid", "random starts p0, v0 = 0", "shapes Q, d_min per scene"], color=c, done=True)
     state = box(ax, 4.7, 4.0, 2.9, 1.5, "state at step t", [r"$p_t,\ v_t$   [B, N, 2]"], title_size=11)
     obs = box(ax, 7.9, 6.5, 3.4, 1.9, "observations.py",
               [r"k nearest neighbours: $p_j - p_i$", r"m nearest target pts: $q_l - p_i$",
-               r"own velocity $v_i$", "fixed size for any N"], color=c)
+               "is each goal taken? + d_min", r"own velocity $v_i$  (39 numbers)"], color=c, done=True)
     pol = box(ax, 12.0, 6.5, 3.3, 1.9, "policy.py",
               [r"shared MLP $\pi_\theta$", "one θ for every agent",
-               r"$a_i = a_{max}\tanh(\mathrm{MLP}(o_i))$"], color=c)
+               r"$a_i = a_{max}\tanh(\mathrm{MLP}(o_i))$"], color=c, done=True)
     step = box(ax, 12.0, 3.9, 3.3, 1.6, "sim.step",
                [r"$v \leftarrow (1-c\,\Delta t)\,v + a\,\Delta t$", r"$p \leftarrow p + v\,\Delta t$"],
                color=c, done=True)
     loss = box(ax, 10.4, 1.0, 5.2, 1.8, "losses.py",
                [r"$L$ = Chamfer$(p_T, Q)$ + $w_c$·collision + $w_e$·effort",
-                "collision: soft penalty on close pairs, every t", "averaged over the batch B"], color=c)
+                "collision below d_min = 0.4 x spacing, every t", "each scene ÷ spacing², mean over B"], color=c, done=True)
     stab = box(ax, 5.4, 1.0, 4.4, 1.8, "gradient stability",
                ["loss.backward() through T steps", "clip the gradient norm",
                 "truncated BPTT · curriculum on T"], color=c, mono=False)
     adam = box(ax, 0.4, 1.0, 4.4, 1.8, "train.py · Adam",
                [r"$\theta \leftarrow \mathrm{Adam}(\theta, \nabla_\theta L)$", "checkpoints + logs → runs/",
-                "GIFs → results/gifs/"], color=c)
+                "best → results/models/"], color=c, done=True)
 
     arrow(ax, [batch["b"], (batch["b"][0], state["l"][1]), state["l"]], label="t = 0", label_at=(2.15, 5.6))
     arrow(ax, [(batch["x"] + 3.5, 8.1), (obs["x"], 8.1)], label="Q", label_at=(5.6, 8.1))
@@ -304,7 +304,7 @@ def phase4():
                ("hungarian_pd.py", "centralized", PHASE[3]),
                ("potential_field.py", "hand-designed", PHASE[3]),
                ("ppo.py", "RL baseline", PHASE[3])]
-    ev = box(ax, 4.3, 2.15, 3.0, 5.75, "evaluate.py",
+    ev = box(ax, 4.3, 2.15, 3.0, 5.75, "phase4.ipynb",
              ["same shapes", "same seeds", "same N and T", "same sim.step", "",
               "runs every method", "through every", "experiment"], color=c)
     for i, (name, desc, col) in enumerate(methods):
@@ -340,7 +340,7 @@ def phase5():
                       "inference with onnxruntime-web")
     group(ax, 0.4, 4.6, 4.2, 3.7, "Python (offline, once)", PHASE[2])
     ckpt = box(ax, 0.7, 6.6, 3.6, 1.2, "runs/…/policy.pt", ["trained θ from Phase 2"], color=PHASE[2])
-    exp = box(ax, 0.7, 4.9, 3.6, 1.3, "export_onnx.py", ["torch.onnx.export(MLP)", "input o  [N, obs_dim]"],
+    exp = box(ax, 0.7, 4.9, 3.6, 1.3, "phase5.ipynb", ["torch.onnx.export(MLP)", "input o  [N, obs_dim]"],
               color=PHASE[2])
     onnx = box(ax, 0.7, 2.6, 3.6, 1.2, "demo/models/policy.onnx", ["static file served with the page"],
                color=c, title_size=10.5)

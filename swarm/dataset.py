@@ -26,7 +26,7 @@ from swarm.shapes import sample_polyline
 
 EXTENT = 0.8                   # larger side of a shape at full size (box is [-0.5, 0.5])
 D_MIN_FRAC = 0.4               # collision distance = 0.4 x drone spacing
-GAP_ARC, GAP_MIN = 3.0, 0.8    # feature-size rule, in drone spacings
+GAP_ARC, GAP_MIN = 3.0, 1.0    # feature-size rule, in drone spacings (1.0: readable, not just drawable)
 
 # (drones N, goals M)
 GRID = [(8, 8), (8, 16), (8, 32), (8, 64),
@@ -36,7 +36,8 @@ GRID = [(8, 8), (8, 16), (8, 32), (8, 64),
 
 TRAIN_FAMILIES = ["circle", "square", "line", "triangle", "pentagon", "random_polygon", "random_polyline", "letters"]
 HELDOUT_FAMILIES = ["star", "heart", "spiral", "word"]
-WORDS = ["MARRY\nME", "UMD", "HI", "SWARM", "LOVE", "FIRE"]
+# Minimum drones under the feature rule: HI 10, UMD/LOVE/FIRE 24, MARRY ME 52 (so only in the 64-drone cells).
+WORDS = ["HI", "UMD", "LOVE", "FIRE", "MARRY\nME"]
 
 
 # --- single-stroke font: each letter is (width, [(points, closed), ...]) on a height-1 grid -----
@@ -273,32 +274,22 @@ def build_cell(n: int, m: int, families, per_family: int, seed: int):
 
 
 def oracle(cell: dict, cfg, iters: int = 300, lr: float = 0.05) -> dict:
-    """Per-scene optimum (Phase 1 method): optimize every scene's own accelerations directly.
+    """Per-scene optimum: the Phase 1 method applied to every scene of a cell.
 
-    All scenes of a cell are optimized together; their losses don't interact
-    and Adam scales each parameter separately, so this equals S separate runs.
+    Optimizes each scene's own accelerations directly, with the same collision
+    penalty as policy training (weight cfg.loss.w_collision, the scene's d_min),
+    so the reference plays by the same rules. All scenes are optimized together;
+    their losses don't interact and Adam scales each parameter separately.
     """
     from swarm.losses import chamfer, close_pairs
-    from swarm.sim import rollout
+    from swarm.plan import optimize_plan
 
-    p0, Q = cell["start"], cell["goals"]
-    S, N, _ = p0.shape
-    v0 = torch.zeros_like(p0)
-    raw = torch.zeros(S, cfg.steps, N, 2, requires_grad=True)
-    opt = torch.optim.Adam([raw], lr=lr)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, iters)
-    for _ in range(iters):
-        loss = chamfer(rollout(p0, v0, cfg.a_max * torch.tanh(raw), cfg)[:, -1], Q)
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-        sched.step()
-    with torch.no_grad():
-        traj = rollout(p0, v0, cfg.a_max * torch.tanh(raw), cfg)
-        final = traj[:, -1]
-        return {"oracle_chamfer": chamfer(final, Q, per_scene=True), "oracle_final": final,
-                "oracle_close_pairs": close_pairs(final, cell["d_min"]),
-                "oracle_traj_head": traj[:4]}          # first 4 trajectories, for GIFs
+    out = optimize_plan(cell["start"], cell["goals"], cfg, iters=iters, lr=lr,
+                        d_min=cell["d_min"], w_collision=cfg.loss.w_collision)
+    final = out["traj"][:, -1]
+    return {"oracle_chamfer": chamfer(final, cell["goals"], per_scene=True), "oracle_final": final,
+            "oracle_close_pairs": close_pairs(final, cell["d_min"]),
+            "oracle_traj_head": out["traj"][:4]}          # first 4 trajectories, for GIFs
 
 
 def build_benchmark(cfg, out_dir="data/benchmark", per_family: int = 4, seed: int = 2026, log=print):

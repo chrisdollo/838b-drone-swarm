@@ -1,100 +1,64 @@
 # Project Structure
 
-How the repo is organized. Files marked *(planned)* don't exist yet; the phase in brackets says when they are added (see [plan.txt](plan.txt)).
+How the repo is organized. Each phase runs from one notebook; all logic lives in the `swarm/` package so notebooks, tests and later phases share the same code.
 
 ```
 project-drone-swarm/
-├── README.md               # project summary and how to run
-├── pyproject.toml          # dependencies (managed with uv)
-├── uv.lock                 # locked dependency versions
-├── main.py                 # uv placeholder; safe to delete
-├── configs/                # YAML settings for runs
-├── swarm/                  # the Python package: all core code
-│   └── baselines/          # comparison methods
-├── scripts/                # entry points you run from the command line
-├── tests/                  # pytest tests
-├── demo/                   # browser demo (static site)
-│   ├── js/
-│   └── models/             # exported ONNX policy
-├── results/                # outputs kept in git
+├── README.md
+├── pyproject.toml, uv.lock   # dependencies (managed with uv)
+├── configs/default.yaml      # all settings
+├── notebooks/                # one runnable notebook per phase
+│   ├── phase1.ipynb
+│   └── phase2.ipynb
+├── swarm/                    # the Python package: all core code
+│   └── baselines/            # Phase 3 comparison methods (to come)
+├── data/benchmark/           # fixed test scenes + per-scene optimum
+├── results/                  # outputs kept in git
 │   ├── figures/
-│   └── gifs/
-├── runs/                   # checkpoints and logs (git-ignored)
-├── report/
-│   ├── progress/           # Nov 17 progress report
-│   └── final/              # final report
-└── docs/                   # planning and background documents
+│   ├── gifs/
+│   └── models/               # trained policy (phase2_policy.pt)
+├── tests/                    # pytest tests
+├── docs/                     # walkthroughs, diagrams, plans
+└── runs/                     # checkpoints and logs (git-ignored)
 ```
 
-## Folders
+## `swarm/`
 
-### `configs/`
-
-One YAML file per setup, so every run is reproducible from its config.
-
-- `default.yaml` *(planned, Phase 1)*: `dim`, `n_agents`, `dt`, `steps`, `damping`, `a_max`, `seed`. Later phases add policy, loss-weight and training settings.
-
-### `swarm/`
-
-The importable package. Everything here is written in PyTorch so the whole rollout is differentiable. State tensors have shape `[B, N, dim]` (batch, agents, dimension).
+Everything is written in PyTorch so the whole rollout is differentiable. State tensors have shape `[B, N, dim]` (batch of scenes, drones, dimension).
 
 | File | Purpose | Phase |
 | --- | --- | --- |
-| `sim.py` | Point-mass dynamics step and rollout | 1 |
-| `shapes.py` | Target point clouds: circle, square, line, polyline | 1 |
-| `losses.py` | Chamfer distance; later collision and effort penalties | 1, 2 |
-| `viz.py` | Plots and GIFs | 1 |
-| `observations.py` | Local observations: nearest neighbors and target points | 2 |
-| `policy.py` | Shared MLP policy | 2 |
-| `train.py` | Training loop | 2 |
-| `metrics.py` | Evaluation metrics shared by all methods | 4 |
+| `config.py` | Load `configs/default.yaml` with attribute access (`cfg.train.lr`) | 1 |
+| `sim.py` | Point-mass step; open-loop rollout (Phase 1); closed-loop rollout and removal test (Phase 2) | 1, 2 |
+| `shapes.py` | Basic target shapes and even sampling along polylines | 1 |
+| `losses.py` | Chamfer distance; shape, collision and effort terms, normalized by drone spacing | 1, 2 |
+| `plan.py` | Optimize a fixed acceleration plan for known scenes (toy optimization and per-scene optimum) | 1, 2 |
+| `dataset.py` | Drones × goals grid, shape families, single-stroke font, feature-size rule, training batches, benchmark | 2 |
+| `observations.py` | What each drone sees: nearest drones, nearest goals and whether they are taken, d_min, own velocity | 2 |
+| `policy.py` | The shared MLP; save and load | 2 |
+| `train.py` | Training loop and benchmark scoring (ratio to the per-scene optimum) | 2 |
+| `viz.py` | GIFs and figures | 1, 2 |
 
-All of these are *(planned)*.
+Controllers share one signature, `controller(pos, vel, Q, d_min) -> acc`, so the Phase 3 baselines run in the same simulator and are scored on the same benchmark.
 
-### `swarm/baselines/`
+## `notebooks/`
 
-Methods we compare against, all using the same simulator and metrics.
-
-| File | Method | Phase |
+| Notebook | Runs | Writes |
 | --- | --- | --- |
-| `hungarian_pd.py` | Hungarian assignment + PD control (centralized) | 3 |
-| `potential_field.py` | Boids / potential field (hand-designed) | 3 |
-| `ppo.py` | PPO environment wrapper and training (RL) | 3 |
+| `phase1.ipynb` | Simulator gradient check, shapes, Chamfer example, toy optimization, learning-rate comparison, fixed plan on new starts | `results/gifs/phase1_circle.gif`, `results/figures/phase1_*.png` |
+| `phase2.ipynb` | Benchmark (build or load), observation demo, training, scoring every cell, GIFs | `runs/phase2/`, `results/models/phase2_policy.pt`, `results/figures/phase2_*.png`, `results/gifs/phase2_*.gif` |
 
-### `scripts/`
+## `data/benchmark/`
 
-Thin command-line entry points that load a config and call into `swarm/`. Run them from the repo root, e.g. `uv run python -m scripts.toy_optimize`.
+One file per grid cell and split, `n<N>_m<M>_<train|heldout>.pt`, plus `index.json`. Each holds the scenes (start positions, goals, d_min, shape family) and their per-scene optimum. Rebuilt by setting `REBUILD_BENCHMARK = True` in the Phase 2 notebook.
 
-| Script | Purpose | Phase |
-| --- | --- | --- |
-| `toy_optimize.py` | Optimize accelerations directly to check gradients flow | 1 |
-| `train.py` | Train the shared policy | 2 |
-| `evaluate.py` | Run experiments for all methods | 4 |
-| `export_onnx.py` | Export the trained policy to `demo/models/` | 5 |
-
-### `tests/`
-
-pytest tests for the simulator, shapes, losses and gradients (e.g. `gradcheck` on `sim.step`). Run with `uv run pytest`.
-
-### `demo/`
-
-Static browser demo, hosted on GitHub Pages: `index.html`, JS simulator and Canvas drawing in `js/`, and the exported policy in `models/`. *(Phase 5)*
-
-### `results/` vs `runs/`
-
-- `results/` holds final figures, GIFs and tables that go into the reports. Kept in git.
-- `runs/` holds checkpoints and training logs. It is in `.gitignore`.
-
-### `report/`
-
-LaTeX sources (or Overleaf exports) for the progress report and the final report.
-
-### `docs/`
+## `docs/`
 
 | File | Contents |
 | --- | --- |
-| [plan.txt](plan.txt) | High-level phases and steps |
-| [STRUCTURE.md](STRUCTURE.md) | This file |
-| [Decentralized Swarm Shape Formation via Differentiable Simulation.md](Decentralized%20Swarm%20Shape%20Formation%20via%20Differentiable%20Simulation.md) | Main project doc: claim, approach, baselines, timeline, literature |
-| [Project Plan Phase 1.md](Project%20Plan%20Phase%201.md) | Detailed Phase 1 concepts and implementation steps |
-| [Lecture Drone Swarms and Differentiable Programming.md](Lecture%20Drone%20Swarms%20and%20Differentiable%20Programming.md) | 25-minute course lecture plan |
+| `walkthrough/phase1.html`, `walkthrough/phase2.html` | The math of each phase, with results (open in a browser); `walkthrough/media/` holds their images |
+| `phases_explained.txt` | Plain-text notes: what each phase does and what every file is for |
+| `architecture/` | Architecture diagrams per phase; `make_figures.py` regenerates them |
+| `plan.txt` | High-level phases and steps |
+| `Decentralized Swarm Shape Formation via Differentiable Simulation.md` | Main project doc: claim, approach, baselines, literature |
+| `Project Plan Phase 1.md` | The original Phase 1 plan and concepts |

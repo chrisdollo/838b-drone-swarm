@@ -31,18 +31,19 @@ class SharedMLP(nn.Module):
         nn.init.normal_(self.head.weight, std=1e-3)
         nn.init.zeros_(self.head.bias)
 
-        # Offsets are ~0.01-1 units and velocities ~0-4, so offsets are scaled up
-        # to give the first layer inputs of similar size.
-        scale = torch.cat([torch.full((dim * (k + m),), pos_scale), torch.ones(dim)])
+        # Distances (offsets, occupancies, d_min) are ~0.01-1 units and velocities
+        # ~0-4, so distances are scaled up to give the first layer similar-sized inputs.
+        n_dist = obs_dim(k, m, dim) - dim
+        scale = torch.cat([torch.full((n_dist,), pos_scale), torch.ones(dim)])
         self.register_buffer("in_scale", scale)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """obs [..., obs_dim] -> acceleration [..., dim], bounded by a_max."""
         return self.a_max * torch.tanh(self.head(self.body(obs * self.in_scale)))
 
-    def act(self, pos: torch.Tensor, vel: torch.Tensor, Q: torch.Tensor) -> torch.Tensor:
-        """Controller interface used by the simulator: (pos, vel, Q) -> acc, all [B, N, dim]."""
-        return self(observe(pos, vel, Q, self.k, self.m))
+    def act(self, pos: torch.Tensor, vel: torch.Tensor, Q: torch.Tensor, d_min: torch.Tensor) -> torch.Tensor:
+        """Controller interface used by the simulator: (pos, vel, Q, d_min) -> acc [B, N, dim]."""
+        return self(observe(pos, vel, Q, d_min, self.k, self.m))
 
     def save(self, path, **extra):
         path = Path(path)

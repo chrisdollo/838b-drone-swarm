@@ -1,4 +1,4 @@
-"""Target shapes as point clouds.
+"""Target shapes as point clouds (Phase 1 primitives; Phase 2 scenes come from dataset.py).
 
 The world is the box [-0.5, 0.5]^dim. Every shape is centered at the origin
 and scaled so its larger side spans EXTENT = 0.8, which leaves a 0.1 margin to
@@ -68,11 +68,6 @@ NAMED = {
     "M": ([[-1, -1], [-1, 1], [0, 0], [1, 1], [1, -1]], False),
 }
 
-# Phase 2 trains on these (randomly rotated, stretched, scaled, shifted) ...
-TRAIN_SHAPES = ["circle", "square", "line", "triangle", "pentagon", "random_polygon", "random_polyline"]
-# ... and never sees these, so they can test generalization in Phase 4.
-HELDOUT_SHAPES = ["star", "Z", "M"]
-
 
 def sample_shape(name: str, m: int, dim: int = 2, vertices=None, closed: bool = False) -> torch.Tensor:
     """Return [m, dim] target points for a named shape.
@@ -99,45 +94,3 @@ def sample_shape(name: str, m: int, dim: int = 2, vertices=None, closed: bool = 
         pts = torch.cat([pts, torch.zeros(m, dim - 2)], dim=1)
     return pts
 
-
-def random_shape(m: int, dim: int = 2, names=TRAIN_SHAPES, gen: torch.Generator | None = None) -> torch.Tensor:
-    """One random target shape, [m, dim].
-
-    Picks a shape from `names`, then randomly rotates and stretches it,
-    rescales it to fit (0.6 to 1.0 of EXTENT) and shifts it inside the box, so
-    the policy never sees the same target twice.
-    """
-    def rand(*size):
-        return torch.rand(*size, generator=gen)
-
-    name = names[int(torch.randint(len(names), (1,), generator=gen))]
-    if name == "circle":
-        theta = 2 * math.pi * torch.arange(m) / m
-        base = torch.stack([torch.cos(theta), torch.sin(theta)], dim=1)
-    elif name == "random_polygon":            # star-convex polygon, 3 to 7 corners
-        n = int(torch.randint(3, 8, (1,), generator=gen))
-        ang = torch.sort(rand(n)).values * 2 * math.pi
-        rad = 0.5 + 0.5 * rand(n)
-        base = sample_polyline(torch.stack([rad * torch.cos(ang), rad * torch.sin(ang)], 1), m, closed=True)
-    elif name == "random_polyline":           # open path through 3 to 5 random points
-        n = int(torch.randint(3, 6, (1,), generator=gen))
-        base = sample_polyline(rand(n, 2) * 2 - 1, m)
-    else:
-        verts, is_closed = NAMED[name]
-        base = sample_polyline(verts, m, closed=is_closed)
-
-    a = float(rand(1)) * 2 * math.pi
-    rot = torch.tensor([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
-    pts = normalize((base @ rot.T) * (0.5 + 0.5 * rand(2)))      # rotate, stretch, fit to EXTENT
-    pts = pts * (0.6 + 0.4 * rand(1))                            # random size
-    half = (pts.max(0).values - pts.min(0).values) / 2
-    pts = pts + (rand(2) * 2 - 1) * (EXTENT / 2 - half)          # random shift, stays inside
-    if dim > 2:
-        pts = torch.cat([pts, torch.zeros(m, dim - 2)], dim=1)
-    return pts
-
-
-def random_shapes(batch: int, m: int, dim: int = 2, names=TRAIN_SHAPES,
-                  gen: torch.Generator | None = None) -> torch.Tensor:
-    """A batch of independent random shapes, [batch, m, dim]."""
-    return torch.stack([random_shape(m, dim, names, gen) for _ in range(batch)])
