@@ -288,3 +288,251 @@ SURPRISE (for the progress report)
   [x] Surprises are written down for the progress report (above)
   [ ] README: how to run the toy script, with the GIF
   [ ] Commit and push
+
+
+==============================================================================
+PHASE 2. POLICY AND TRAINING
+==============================================================================
+
+------------------------------------------------------------------------------
+1. BIG PICTURE
+------------------------------------------------------------------------------
+
+Goal: replace Phase 1's fixed script of accelerations with ONE small neural
+network that every drone carries and runs on what it sees.
+
+Why: the Phase 1 plan only works for the one start it was optimized for.
+On 15 new starts it scores 0.164 (worse than not moving). A policy reacts
+to the current situation, so it works from any start, for any shape, with
+any number of drones, and keeps working if drones are lost.
+
+  Phase 1:  a = a_max * tanh( raw[t] )                       fixed table
+  Phase 2:  a = a_max * tanh( MLP_theta( observe(p, v, Q) ) )  every step
+
+Decentralized execution, centralized training: during training we simulate
+the whole swarm and use one swarm-wide loss. At run time each drone only
+uses its own observation and its own copy of the network.
+
+One training iteration:
+  1. make 32 new random scenes (a batch): random starts + random shapes
+  2. closed loop, T times: observe -> policy -> sim.step
+  3. loss = shape (last 20% of steps) + collision + effort
+  4. backward through every step and every policy call
+  5. clip the gradient, Adam step, lr decays (cosine)
+  every 100 iterations: score 64 fixed validation scenes, save the best
+
+Yes, this is real training: 3,000 iterations, ~10 minutes on the M4 CPU.
+What gets trained: the 6,274 MLP weights theta, shared by all drones.
+There is no dataset: the simulator generates every scene on the fly.
+
+
+------------------------------------------------------------------------------
+2. HOW EACH FILE HELPS
+------------------------------------------------------------------------------
+
+New:
+  swarm/observations.py     What each drone sees (makes it decentralized).
+  swarm/policy.py           The shared MLP; save / load checkpoints.
+  swarm/train.py            The training loop, validation, checkpoints.
+  scripts/train.py          Command-line runner for long runs.
+  scripts/play.py           Run a checkpoint on any scenario -> GIF.
+  notebooks/phase2_training.ipynb
+                            Runs training with live curves, then every test.
+  tests/test_observations.py, test_policy.py, test_train.py
+
+Changed:
+  swarm/sim.py              + rollout_closed_loop, rollout_with_removal
+  swarm/losses.py           + shape_loss (last frames), collision, effort
+  swarm/shapes.py           + more named shapes, random_shape(s),
+                              TRAIN_SHAPES / HELDOUT_SHAPES
+  swarm/config.py           nested sections (cfg.train.lr), to_dict
+  swarm/viz.py              + GIF grids, final-position grids, training plots
+  configs/default.yaml      + device, policy, loss and train sections
+
+Tests: 44 (25 from Phase 1 + 19 new), all passing.
+
+
+------------------------------------------------------------------------------
+3. FILE BY FILE
+------------------------------------------------------------------------------
+
+--- configs/default.yaml (new sections) --------------------------------------
+
+  device: cpu          mps (Apple GPU) is only ~1.3x faster at this size
+  policy:
+    k_neighbors: 6     nearest other drones each drone sees
+    m_targets: 8       nearest target points each drone sees
+    hidden: 64         width of each hidden layer
+    layers: 2          number of hidden layers
+    pos_scale: 10      offsets (~0.01-1) are scaled up before the MLP
+  loss:
+    hold_frac: 0.2     shape loss over the last 20% of steps
+    w_collision: 10    weight of the collision penalty
+    d_min: 0.02        collision distance
+    w_effort: 1e-4     weight of the effort penalty
+  train:
+    batch_size: 32     scenes per iteration
+    iters: 3000
+    lr: 0.003 -> lr_min: 0.0003 (cosine)
+    grad_clip: 1.0     max gradient norm
+    tbptt: 0           truncated backprop every K steps (0 = off)
+    curriculum         T = 40 (it 0), 70 (it 500), 100 (it 1000)
+    val_every: 100, val_scenes: 64, val_seed: 1234
+
+--- swarm/observations.py ----------------------------------------------------
+
+What it does: builds each drone's input, 30 numbers:
+  [6 nearest drones: p_j - p_i | 8 nearest target points: q_l - p_i | v_i]
+
+  knn_offsets(src, dst, k, exclude_self)
+    Picks the k nearest dst points for every src point (topk on the
+    distance matrix) and returns the offsets, nearest first. Choosing WHICH
+    points is a discrete decision and has no gradient, so it runs under
+    no_grad. The offsets themselves stay differentiable.
+  observe(pos, vel, Q, k, m)
+    Concatenates neighbours, targets and own velocity: [B, N, 30].
+
+Properties (each has a test):
+  - same size for any N            -> one policy for any swarm size
+  - unchanged if the scene shifts  -> works anywhere in space
+  - reordering drones only reorders the outputs -> no drone has an identity
+  - never includes the drone itself; pads with zeros if N <= k
+
+--- swarm/policy.py ----------------------------------------------------------
+
+  SharedMLP: 30 -> 64 -> 64 -> 2, SiLU activations, a = a_max * tanh(out).
+    - 6,274 weights, shared by every drone.
+    - SiLU instead of ReLU: smooth, so gradients through 100 steps are smooth.
+    - Output layer starts tiny (std 1e-3): the untrained swarm barely moves.
+    - Inputs scaled: offsets x10, velocity x1, so all inputs are similar size.
+  act(pos, vel, Q): observe + forward. This is the "controller" the
+    simulator calls. Phase 3 baselines will use the same signature.
+  save(path) / load(path): checkpoint with weights + hyperparameters.
+
+--- swarm/sim.py (additions) -------------------------------------------------
+
+  rollout_closed_loop(pos0, vel0, Q, controller, cfg, steps, tbptt)
+    At every step: acc = controller(pos, vel, Q), then step(). Returns the
+    trajectory and the accelerations (the effort loss needs them).
+    tbptt = K cuts the gradient chain every K steps (off by default).
+  rollout_with_removal(...)
+    Self-healing test: run, delete some drones at step t, continue.
+
+--- swarm/losses.py (additions) ----------------------------------------------
+
+  L = shape + 10 * collision + 1e-4 * effort
+  shape_loss      Chamfer averaged over the last 20% of steps. Drones must
+                  arrive AND stay, not fly through the shape at step T.
+                  Not all steps: early on they are necessarily far away.
+  collision_loss  (d_min - distance)^2 for each pair closer than 0.02, over
+                  all steps. Smooth, so it gives gradients (a yes/no
+                  "collided" has none).
+  effort_loss     mean ||a||^2: prefers gentle motion.
+
+--- swarm/shapes.py (additions) ----------------------------------------------
+
+  NAMED: square, line, triangle, pentagon, star, Z, M (vertex lists).
+  random_shape(m): picks a training shape, randomly rotates, stretches,
+    resizes (0.6-1.0) and shifts it inside the box. random_shapes: a batch.
+  TRAIN_SHAPES = circle, square, line, triangle, pentagon,
+                 random_polygon, random_polyline
+  HELDOUT_SHAPES = star, Z, M   (never trained on -> generalization test)
+
+--- swarm/train.py -----------------------------------------------------------
+
+  make_batch       32 scenes: starts uniform in the box, at rest, one random
+                   shape each (M = 2N points).
+  rollout_length   the curriculum: T = 40, then 70, then 100.
+  evaluate         runs a policy on fixed scenes, no gradients. Reports
+                   final Chamfer, closest pair, pairs closer than d_min,
+                   and final speed (~0 = settled).
+  train(cfg, run_dir, callback)
+                   the loop above. Saves runs/<name>/best.pt (best
+                   validation Chamfer), last.pt and history.json. The
+                   callback lets the notebook redraw plots while it trains.
+
+--- scripts/train.py, scripts/play.py ----------------------------------------
+
+  uv run python -m scripts.train --name phase2
+  uv run python -m scripts.play --ckpt runs/phase2/best.pt --shape star
+  uv run python -m scripts.play --ckpt runs/phase2/best.pt --n 64
+  uv run python -m scripts.play --ckpt runs/phase2/best.pt --remove 8
+
+--- notebooks/phase2_training.ipynb ------------------------------------------
+
+  1 setup, 2 random training scenes, 3 what one drone sees, 4 untrained
+  policy, 5 training with live curves, 6 validation results, 7 unseen
+  shapes, 8 scaling (16 / 32 / 64 drones), 9 self-healing, 10 policy vs
+  the Phase 1 plan. All logic is imported from swarm/.
+
+
+------------------------------------------------------------------------------
+4. RESULTS (notebook run, 3,000 iterations, 9.6 min on CPU)
+------------------------------------------------------------------------------
+
+  Final Chamfer, lower is better:
+
+  64 validation scenes (random shapes)   untrained 0.0779 -> trained 0.00069
+                                         best checkpoint: iteration 1,700
+  16 new starts on the circle            Phase 1 plan 0.164 vs policy 0.00095
+  Unseen shapes                          star 0.0027, Z 0.0019, M 0.0022
+    (trained shapes for scale)           circle 0.0009, square 0.0031
+  Swarm size (trained on 32)             16: 0.0038   32: 0.00075   64: 0.00030
+  Self-healing, 8 of 32 removed at 60    circle 0.0012 -> 0.0038 -> 0.0022 (step 160)
+                                         square 0.0023 -> 0.0075 -> 0.0057
+  Pairs closer than d_min at the end     11.4 per scene (untrained 0.6)
+
+  For scale: Phase 1 optimized ONE circle scene directly and got 0.00065.
+  The policy reaches the same level on random scenes, from any start, with
+  no optimization at run time.
+
+  Outputs:
+    runs/phase2/best.pt, last.pt, history.json   (git-ignored)
+    results/figures/phase2_training.png
+    results/gifs/phase2_validation.gif, phase2_unseen_shapes.gif,
+                 phase2_scaling.gif, phase2_self_healing.gif
+    notebooks/phase2_training.ipynb (executed, with all outputs)
+
+
+------------------------------------------------------------------------------
+SURPRISES (for the progress report)
+------------------------------------------------------------------------------
+
+1. One gradient step already helps a lot. After a single Adam update the
+   validation Chamfer drops from 0.057 to 0.013. The gradient through the
+   simulator points straight at "move toward the shape".
+
+2. Collisions are partly geometry. On a full-size line there is only
+   0.025 of room per drone (d_min = 0.02), and random training lines are
+   smaller, so drones there must crowd (~40 close pairs). On roomy shapes
+   only 1-2 pairs end too close. Raising w_collision from 10 to 100 cut
+   line collisions (40 -> 7.5) but doubled the shape error. Kept at 10;
+   collision tuning is a follow-up.
+
+3. Far-away gaps are invisible to the policy. With 16 drones, or after
+   removing 8, parts of the shape stay empty: the square's right side stays
+   thin after removal. A drone sees only its 8 nearest target points, so a
+   gap on the far side never shows up in its view. During training the
+   loss sees the whole shape, but at run time the policy cannot. Candidate
+   fixes: larger m, or a coarse summary of the whole shape in the input.
+
+4. Effort grows during training (0.005 -> 0.2) while drones still end at
+   rest. w_effort = 1e-4 is too small to matter; the policy makes many
+   small corrections while holding position.
+
+5. The curriculum causes visible bumps. Each time T jumps (40 -> 70 at it
+   500, 70 -> 100 at it 1000) the training loss jumps, then recovers.
+
+
+------------------------------------------------------------------------------
+5. DONE WHEN
+------------------------------------------------------------------------------
+
+  [x] observations, policy, closed-loop rollout, losses, training loop
+  [x] 44 tests pass
+  [x] training is stable: validation Chamfer 0.071 -> 0.0007
+  [x] notebook runs end to end with GIFs and every test
+  [ ] collision tuning (weight, d_min vs shape size)
+  [ ] far-gap coverage (larger m or a global shape summary)
+  [ ] save the final policy where git tracks it (runs/ is ignored)
+  [ ] commit

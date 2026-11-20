@@ -1,4 +1,6 @@
-# Phase 1 settings. Every run loads one of these files so it can be reproduced.
+# Every run loads one of these files so it can be reproduced.
+
+# --- Phase 1: simulator -------------------------------------------------------
 dim: 2          # spatial dimension; set to 3 later for 3D
 n_agents: 32    # N
 dt: 0.05        # seconds per step
@@ -6,3 +8,33 @@ steps: 100      # rollout length T (dt * steps = 5 s of motion)
 damping: 0.5    # c in v_{t+1} = (1 - c*dt) v_t + a_t dt
 a_max: 2.0      # max acceleration; actions are a_max * tanh(raw)
 seed: 0
+device: cpu     # cpu | mps (Apple GPU) | cuda. CPU is about as fast at this size.
+
+# --- Phase 2: policy, loss, training -----------------------------------------
+policy:
+  k_neighbors: 6     # nearest other agents each agent sees
+  m_targets: 8       # nearest target points each agent sees
+  hidden: 64         # width of each hidden layer
+  layers: 2          # number of hidden layers
+  pos_scale: 10.0    # offsets are multiplied by this before the MLP (they are ~0.01-1)
+
+loss:
+  hold_frac: 0.2     # shape loss averaged over the last 20% of steps, not just the final one
+  w_collision: 10.0  # soft penalty for pairs closer than d_min, over all steps
+  d_min: 0.02        # collision distance (32 agents on a 0.8 line are 0.026 apart)
+  w_effort: 0.0001   # penalty on mean ||a||^2
+
+train:
+  batch_size: 32     # scenes per iteration, each with its own random start and shape
+  iters: 3000
+  lr: 0.003          # Adam; cosine decay to lr_min (Phase 1 lesson)
+  lr_min: 0.0003
+  grad_clip: 1.0     # max gradient norm
+  tbptt: 0           # truncate backprop every K steps; 0 = full BPTT
+  curriculum:        # [from iteration, rollout length T]: short rollouts first
+    - [0, 40]
+    - [500, 70]
+    - [1000, 100]
+  val_every: 100
+  val_scenes: 64     # fixed validation scenes (own seed), always at full T
+  val_seed: 1234

@@ -51,20 +51,43 @@ def sample_polyline(vertices, m: int, closed: bool = False) -> torch.Tensor:
     return starts[idx] + frac[:, None] * seg[idx]
 
 
+def _regular_polygon(n: int, radii=(1.0,)) -> list:
+    """Vertices of a regular polygon (or a star, when two radii alternate)."""
+    return [[radii[k % len(radii)] * math.cos(math.pi / 2 + 2 * math.pi * k / n),
+             radii[k % len(radii)] * math.sin(math.pi / 2 + 2 * math.pi * k / n)] for k in range(n)]
+
+
+# name -> (vertices, closed)
+NAMED = {
+    "square": ([[-1, -1], [1, -1], [1, 1], [-1, 1]], True),
+    "line": ([[-1, 0], [1, 0]], False),
+    "triangle": (_regular_polygon(3), True),
+    "pentagon": (_regular_polygon(5), True),
+    "star": (_regular_polygon(10, radii=(1.0, 0.45)), True),
+    "Z": ([[-1, 1], [1, 1], [-1, -1], [1, -1]], False),
+    "M": ([[-1, -1], [-1, 1], [0, 0], [1, 1], [1, -1]], False),
+}
+
+# Phase 2 trains on these (randomly rotated, stretched, scaled, shifted) ...
+TRAIN_SHAPES = ["circle", "square", "line", "triangle", "pentagon", "random_polygon", "random_polyline"]
+# ... and never sees these, so they can test generalization in Phase 4.
+HELDOUT_SHAPES = ["star", "Z", "M"]
+
+
 def sample_shape(name: str, m: int, dim: int = 2, vertices=None, closed: bool = False) -> torch.Tensor:
     """Return [m, dim] target points for a named shape.
 
-    name: "circle", "square", "line", or "polyline" (pass vertices, and
-    closed=True for a closed outline). For dim > 2 the shape lies flat in the
-    z = 0 plane, so 3D runs work without new shapes.
+    name: "circle", any key of NAMED ("square", "line", "triangle", "star",
+    "Z", ...), or "polyline" (pass vertices, and closed=True for a closed
+    outline). For dim > 2 the shape lies flat in the z = 0 plane, so 3D runs
+    work without new shapes.
     """
     if name == "circle":
         theta = 2 * math.pi * torch.arange(m) / m
         pts = (EXTENT / 2) * torch.stack([torch.cos(theta), torch.sin(theta)], dim=1)
-    elif name == "square":
-        pts = normalize(sample_polyline([[-1, -1], [1, -1], [1, 1], [-1, 1]], m, closed=True))
-    elif name == "line":
-        pts = normalize(sample_polyline([[-1, 0], [1, 0]], m))
+    elif name in NAMED:
+        verts, is_closed = NAMED[name]
+        pts = normalize(sample_polyline(verts, m, closed=is_closed))
     elif name == "polyline":
         if vertices is None:
             raise ValueError("polyline needs vertices")
@@ -75,3 +98,46 @@ def sample_shape(name: str, m: int, dim: int = 2, vertices=None, closed: bool = 
     if dim > 2:
         pts = torch.cat([pts, torch.zeros(m, dim - 2)], dim=1)
     return pts
+
+
+def random_shape(m: int, dim: int = 2, names=TRAIN_SHAPES, gen: torch.Generator | None = None) -> torch.Tensor:
+    """One random target shape, [m, dim].
+
+    Picks a shape from `names`, then randomly rotates and stretches it,
+    rescales it to fit (0.6 to 1.0 of EXTENT) and shifts it inside the box, so
+    the policy never sees the same target twice.
+    """
+    def rand(*size):
+        return torch.rand(*size, generator=gen)
+
+    name = names[int(torch.randint(len(names), (1,), generator=gen))]
+    if name == "circle":
+        theta = 2 * math.pi * torch.arange(m) / m
+        base = torch.stack([torch.cos(theta), torch.sin(theta)], dim=1)
+    elif name == "random_polygon":            # star-convex polygon, 3 to 7 corners
+        n = int(torch.randint(3, 8, (1,), generator=gen))
+        ang = torch.sort(rand(n)).values * 2 * math.pi
+        rad = 0.5 + 0.5 * rand(n)
+        base = sample_polyline(torch.stack([rad * torch.cos(ang), rad * torch.sin(ang)], 1), m, closed=True)
+    elif name == "random_polyline":           # open path through 3 to 5 random points
+        n = int(torch.randint(3, 6, (1,), generator=gen))
+        base = sample_polyline(rand(n, 2) * 2 - 1, m)
+    else:
+        verts, is_closed = NAMED[name]
+        base = sample_polyline(verts, m, closed=is_closed)
+
+    a = float(rand(1)) * 2 * math.pi
+    rot = torch.tensor([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    pts = normalize((base @ rot.T) * (0.5 + 0.5 * rand(2)))      # rotate, stretch, fit to EXTENT
+    pts = pts * (0.6 + 0.4 * rand(1))                            # random size
+    half = (pts.max(0).values - pts.min(0).values) / 2
+    pts = pts + (rand(2) * 2 - 1) * (EXTENT / 2 - half)          # random shift, stays inside
+    if dim > 2:
+        pts = torch.cat([pts, torch.zeros(m, dim - 2)], dim=1)
+    return pts
+
+
+def random_shapes(batch: int, m: int, dim: int = 2, names=TRAIN_SHAPES,
+                  gen: torch.Generator | None = None) -> torch.Tensor:
+    """A batch of independent random shapes, [batch, m, dim]."""
+    return torch.stack([random_shape(m, dim, names, gen) for _ in range(batch)])

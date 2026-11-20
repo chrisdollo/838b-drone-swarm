@@ -42,3 +42,18 @@ def test_3d_lies_flat():
 def test_unknown_shape_raises():
     with pytest.raises(ValueError):
         sample_shape("hexagon", 10)
+
+
+def test_named_and_heldout_shapes():
+    from swarm.shapes import HELDOUT_SHAPES, NAMED
+    for name in list(NAMED) + HELDOUT_SHAPES:
+        q = sample_shape(name, 40)
+        assert q.shape == (40, 2) and q.abs().max() <= 0.5
+
+
+def test_random_shapes_inside_box_and_reproducible():
+    from swarm.shapes import random_shapes
+    a = random_shapes(50, 64, gen=torch.Generator().manual_seed(3))
+    b = random_shapes(50, 64, gen=torch.Generator().manual_seed(3))
+    assert a.shape == (50, 64, 2) and torch.equal(a, b)
+    assert a.abs().max() <= 0.4 + 1e-5
