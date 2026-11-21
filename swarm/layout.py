@@ -270,3 +270,12 @@ def text_goals(text: str, n: int | None = None, pitch: float | None = None, font
     from swarm.dataset import GAP_MIN, feature_ratio      # the feature-size rule
     info["readable"] = feature_ratio(strokes, info["n"]) >= GAP_MIN
     return goals, info
+
+
+def fewest_readable(text: str, font: str = "hershey", start: int = 2, stop: int = 400) -> int | None:
+    """Smallest drone count that lays out exactly n goals and keeps the text readable."""
+    for n in range(start, stop):
+        goals, info = text_goals(text, n=n, font=font)
+        if goals is not None and len(goals) == n and info["readable"]:
+            return n
+    return None

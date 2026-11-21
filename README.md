@@ -12,7 +12,7 @@ We train one small neural policy, shared by every drone, that makes a 2D swarm s
 - **Policy:** one shared MLP. Each drone sees only its nearest drones, its nearest goal points and whether those goals are taken, all relative to itself, and outputs an acceleration.
 - **Loss:** Chamfer distance between drones and the target shape (no drone is assigned a fixed spot), plus collision and effort penalties.
 - **Training:** roll out the swarm, score the formation, backpropagate through every step.
-- **Data:** a grid of 8–64 drones × 8–128 goals, shapes that pass a feature-size check, and a fixed benchmark scored against each scene's optimum.
+- **Data (v3):** one goal slot per drone (a slot at every stroke end, corner and junction, the rest evenly spaced), 8–96 drones per batch, shapes and Hershey-font strings (A–Z, 0–9) that pass a feature-size check, and a fixed benchmark scored by one-to-one matching of drones to slots.
 - **Baselines (Phase 3):** Hungarian assignment + PD control, potential fields, and PPO.
 
 ## Setup
@@ -28,8 +28,9 @@ Each phase is one notebook that runs end to end and can be re-run on its own. Op
 
 | Notebook | What it does | Time |
 | --- | --- | --- |
-| [notebooks/phase1.ipynb](notebooks/phase1.ipynb) | Simulator checks, Chamfer loss, toy optimization, learning-rate lesson | ~1 min |
-| [notebooks/phase2.ipynb](notebooks/phase2.ipynb) | Benchmark data, training the shared policy, results on every cell, GIFs | ~25 min |
+| [notebooks/phase1.ipynb](notebooks/phase1.ipynb) | Simulator checks, Chamfer loss, toy optimization, learning-rate lesson, text goals with one slot per drone | ~2 min |
+| [notebooks/phase2.ipynb](notebooks/phase2.ipynb) | v3 benchmark, training the shared policy, slot metrics per swarm size, GIFs | ~30 min |
+| [notebooks/phase2_compare.ipynb](notebooks/phase2_compare.ipynb) | v2 and v3 policies on the same benchmark scenes | ~5 min |
 
 The walkthroughs explain the math behind each phase: [docs/walkthrough/phase1.html](docs/walkthrough/phase1.html) and [docs/walkthrough/phase2.html](docs/walkthrough/phase2.html) (open in a browser).
 
@@ -48,20 +49,22 @@ Before adding any neural network, we optimize the 100 × 32 accelerations of one
 
 ## Phase 2: one shared policy
 
-Every drone runs the same 6,850-weight network on what it sees: its 6 nearest drones, its 8 nearest goals and whether each is already taken, the scene's collision distance and its own velocity. It is trained on a grid of 8–64 drones × 8–128 goals (16 minutes on a laptop CPU) and scored on a fixed benchmark against each scene's optimum, i.e. the Phase 1 method applied to that exact scene.
+Every drone runs the same 6,850-weight network on what it sees: its 6 nearest drones, its 8 nearest goal slots and whether each is already taken, the scene's collision distance and its own velocity. **v3** (current) trains with one goal slot per drone and 8–96 drones per batch, including random letter/digit strings, and scores each policy by matching drones to slots one-to-one (Hungarian): *slots filled* (a drone within the collision distance of its slot), *slot error* (in drone spacings) and *steps to form*.
 
 <p align="center">
-  <img src="results/gifs/phase2_baseline_heldout.gif" alt="The policy forming a star, heart, spiral, LOVE and MARRY ME, none of which were in training" width="760">
+  <img src="results/gifs/phase2_v3_spacing_words.gif" alt="The v3 policy forming HI, UMD, FIRE, LOVE and MARRY ME, none of which were in training" width="760">
 </p>
 
-| Result | |
-| --- | --- |
-| Benchmark, training shapes | **2.23×** the per-scene optimum (untrained: 109×) |
-| Benchmark, held-out shapes (star, heart, spiral, words) | **2.25×**: no penalty for unseen shapes |
-| New starts: Phase 1 fixed plan vs policy | 0.167 vs **0.00049** Chamfer |
-| Self-healing (8 of 32 drones removed) | repairs 64–87% of the damage |
+All on the v3 benchmark (identical scenes, mean over N = 8–96):
 
-It is strongest with two or more goals per drone (1.3–2.4×) and weakest with one goal per drone (3–6.5×), and dense 64-drone swarms still crowd. Details: [docs/walkthrough/phase2.html](docs/walkthrough/phase2.html).
+| Policy | Slots filled, training shapes | Slots filled, held-out shapes | Slot error (held-out) |
+| --- | --- | --- | --- |
+| v2 spacing (more goals than drones) | 40% | 46% | 1.39 |
+| v3 baseline | 29% | 37% | 1.30 |
+| **v3 spacing** | **42%** | **50%** | **1.18** |
+| Per-scene optimum (Phase 1 method) | 72% | 76% | 0.98 |
+
+The policy works on unseen shapes and words, but it fills well under the per-scene optimum and gets worse with swarm size (55% at 8 drones, 33% at 96). The main cause is the loss: Chamfer has no one-to-one constraint, so drones pile two to a slot and leave corners and stroke ends empty. A matching-aware loss (e.g. Sinkhorn) is the proposed next fix. Details: [docs/phases_explained.txt](docs/phases_explained.txt) and [docs/walkthrough/phase2.html](docs/walkthrough/phase2.html) (v2 math).
 
 ## Repo layout
 
@@ -71,7 +74,7 @@ It is strongest with two or more goals per drone (1.3–2.4×) and weakest with 
 | `swarm/baselines/` | Phase 3 baselines (to come) |
 | `configs/default.yaml` | All settings |
 | `notebooks/` | One runnable notebook per phase |
-| `data/benchmark/` | Fixed test scenes with their per-scene optimum |
+| `data/benchmark_v3/` | Fixed test scenes (one slot per drone) with their per-scene optimum; `data/benchmark/` is the v2 one |
 | `results/` | Figures, GIFs and the trained policy (`results/models/`) |
 | `tests/` | pytest tests |
 | `docs/` | Walkthroughs, architecture diagrams, plans |

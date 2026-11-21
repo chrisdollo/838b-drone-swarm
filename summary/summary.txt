@@ -1,6 +1,6 @@
 PROJECT SUMMARY (technical)
 Decentralized Swarm Shape Formation via Differentiable Simulation
-State as of Nov 20, 2026. Details: docs/phases_explained.txt and the walkthroughs in docs/walkthrough/.
+State as of Nov 20, 2026 (v3). Details: docs/phases_explained.txt and the walkthroughs in docs/walkthrough/.
 
 Idea: every drone runs the same small neural network on what it sees. The network
 is trained by backpropagating a formation loss through a differentiable physics
@@ -207,22 +207,62 @@ Version history
 
 
 ==============================================================================
-TEXT-TO-GOALS GENERATOR (built, not yet used in training)
+PHASE 2, VERSION 3: ONE GOAL SLOT PER DRONE (current)
 ==============================================================================
 
-swarm/layout.py: text_goals("MARRY\nME", n=128) or text_goals(..., pitch=0.025)
-  - Hershey Simplex single-stroke font (uppercase); fonts are swappable.
-  - A goal at every stroke end, corner (turn > 35 deg) and junction; anchors
-    closer than half a spacing merged (one goal per junction).
-  - Remaining goals fill the widest gaps one by one -> even spacing, longer
-    letters get more goals; inside sharp V's dots closer than 0.6 spacing are
-    moved elsewhere. One goal per drone (M = N).
-  - Either the drone count follows from the spacing, or the spacing from the
-    drone count; info["readable"] says whether there are enough drones.
-  - Readable from: HI 10, UMD 26, LOVE 40, SWARM 72, MARRY ME 92,
-    WILL YOU MARRY ME 156 drones.
-  Review sheet: results/figures/layout_text_examples.png
+Direction: slot-based formation, drones = goals (M = N); decentralized,
+communication-free, learned via differentiable physics, to be compared with a
+centralized Hungarian-assignment baseline in Phase 3.
 
-Decided next: every shape family on this layout with drones = goals, a random
-drone count 8-96 per batch, rebuilt benchmark with "slots filled" and "slot
-error" scores, then retrain. Self-healing is set aside for now.
+Goal layout (swarm/layout.py), now used for EVERY shape family
+  - A slot at every stroke end, corner (turn > 35 deg) and junction
+    ("anchors"; close anchors merged), the rest filled into the widest gaps,
+    no two slots closer than 0.6 spacings. Exactly N slots for N drones.
+  - Text: Hershey Simplex single-stroke font, A-Z and 0-9 (digits checked).
+    fewest_readable(text) = fewest drones that keep it readable.
+
+What changed from v2 (details: docs/phases_explained.txt, "VERSION 3")
+  - N drawn uniformly from 8-96 for every batch; M = N.
+  - Training families add random strings (1-4 letters/digits); "letters" is
+    1-2 letters. A string is used only if readable for the batch's N.
+  - Held out: star, heart, spiral, words HI UMD LOVE FIRE MARRY ME, and 12
+    fixed strings (seed 838: 8 A 63 22 NY4 ODP PH0 0TO 6F2L G CS W), all
+    excluded from the training sampler.
+  - Benchmark data/benchmark_v3 (seed 2026 + 100 i + split): N = 8, 16, 24,
+    32, 48, 64, 96; 4 scenes per family; per-scene optimum stored.
+  - Scores (swarm/metrics.py), drones matched one-to-one to slots (Hungarian):
+      slots filled  share of slots with their drone within d_min
+      slot error    mean matched distance in drone spacings
+      steps to form first step after which slot error stays < 0.5 spacings
+      shared goals  share of slots that are the nearest slot of 2+ drones
+  - Model selection / early stopping on mean slot error.
+  - Phase 1 text plans score the shape at every step (hold_frac=1.0) so the
+    drones move fast and hold, instead of arriving just as the run ends.
+  - Outputs tagged phase2_v3_*; v2 models/results kept, v2 notebooks in
+    notebooks/v2/.
+
+Results (same v3 benchmark, mean over N; training / held-out shapes)
+                 slots filled   slot error    shared goals  close pairs
+  v2 spacing       40% / 46%    2.54 / 1.39      18%          11.8
+  v3 baseline      29% / 37%    1.84 / 1.30      25%          15.1
+  v3 spacing       42% / 50%    1.60 / 1.18      19%           6.8
+  optimum          72% / 76%    1.20 / 0.98      12%           8.4
+  Words (v3 spacing): UMD 72%, LOVE 65%, FIRE 52%, HI 50%, MARRY ME 33%.
+
+Problems
+  1. Chamfer has no one-to-one constraint: training loss falls while slot
+     error rises; ~19% of slots doubled up; even the optimum fills only 72%.
+     Proposed (not added): a Sinkhorn / soft-matching loss term.
+  2. Corners and stroke ends are the empty slots (41% vs 49% for fill slots).
+  3. Slot error and slots filled disagree late in training, so early
+     stopping on slot error kept an early v3 baseline checkpoint (29% filled
+     vs 37% at the end). Select on slots filled next time.
+  4. Filling drops with swarm size (55% at 8 drones -> 33% at 96).
+
+
+Next phases after that
+
+Phase 3, baseline comparison (the main result). Hungarian assignment plus straight or smooth paths, run through the same simulator with the same acceleration limit. Compare on shape error, slots filled, steps to form (first step where error drops below a threshold), collisions, and effort.
+Phase 4, failure recovery (evaluation only). Remove k drones mid-flight and regenerate goals for N−k drones with text_goals. Your policy just keeps running, while the baseline has to re-run Hungarian and replan. Measure the time to re-form.
+Phase 5, 3D. This was planned for the Nov 17 midpoint, so you’re behind on it. It’s a small code change ([B, N, 3]), but the text layout needs a plane or a projection. Do it only if Phases 3 and 4 are done.
+Phase 6, demo and report (Dec 17). A browser demo where you type text and watch the swarm form it and recover from a failure, plus the final report.

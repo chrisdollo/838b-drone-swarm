@@ -1,12 +1,13 @@
 """Phase 2 training loop: train the shared policy by backpropagating through the simulator.
 
 Each iteration:
-  1. pick a drones x goals cell (N, M) from the grid
-  2. sample a batch of scenes for it (random starts, random training shapes, d_min per scene)
+  1. draw the swarm size N uniformly from N_RANGE (8-96); every scene has N goal slots (M = N)
+  2. sample a batch of scenes (random starts, random training shapes, d_min per scene)
   3. closed-loop rollout: observe -> policy -> sim.step, T times
   4. loss = shape (last frames) + collision + effort, each scene normalized by its spacing^2
   5. backward through every step and every policy call, clip, Adam step
-Validation scores the fixed benchmark against its per-scene optimum.
+Validation scores the fixed benchmark (data/benchmark_v3); the best checkpoint
+and early stopping use the mean slot error (swarm/metrics.py).
 Called from notebooks/phase2.ipynb.
 """
 
@@ -19,8 +20,9 @@ import numpy as np
 import torch
 
 from swarm.config import to_dict
-from swarm.dataset import D_MIN_FRAC, GRID, TRAIN_FAMILIES, load_cell, make_batch
+from swarm.dataset import BENCH_DIR, BENCH_N, D_MIN_FRAC, N_RANGE, TRAIN_FAMILIES, load_cell, make_batch, sample_n
 from swarm.losses import chamfer, close_pairs, spacing_cv, total_loss
+from swarm.metrics import slot_error_curve, slot_metrics, steps_to_form
 from swarm.policy import SharedMLP, policy_from_config
 from swarm.sim import rollout_closed_loop
 
@@ -35,13 +37,13 @@ def rollout_length(it: int, curriculum, T_max: int) -> int:
 
 
 @torch.no_grad()
-def evaluate_cell(policy, cell: dict, cfg, steps: int | None = None) -> dict:
+def evaluate_cell(policy, cell: dict, cfg, steps: int | None = None, form: bool = False) -> dict:
     """Run a controller on every scene of a benchmark cell. Per-scene tensors.
 
-    ratio = (Chamfer + eps) / (per-scene optimum + eps), with eps = 1% of the
-    scene's spacing^2. 1.0 = as good as optimizing that scene directly. The
-    floor keeps the ratio meaningful when the optimum is ~0 (e.g. 8 drones
-    sitting exactly on 8 goals): errors far below a drone spacing don't count.
+    slot_error / filled / shared_goals: one-to-one matching at the last step (swarm/metrics.py).
+    ratio = (Chamfer + eps) / (per-scene optimum + eps), eps = 1% of spacing^2
+    (secondary with M = N: the optimum is ~0, so this is mostly Chamfer / eps).
+    form=True also computes the slot error at every step and steps_to_form (slower).
     """
     controller = policy.act if hasattr(policy, "act") else policy
     p0, Q, d_min = cell["start"], cell["goals"], cell["d_min"]
@@ -49,30 +51,53 @@ def evaluate_cell(policy, cell: dict, cfg, steps: int | None = None) -> dict:
     final = traj[:, -1]
     ch = chamfer(final, Q, per_scene=True)
     eps = 0.01 * (d_min / D_MIN_FRAC) ** 2
-    return {"chamfer": ch, "ratio": (ch + eps) / (cell["oracle_chamfer"] + eps), "close_pairs": close_pairs(final, d_min),
-            "uniformity": spacing_cv(final),
-            "speed": (traj[:, -1] - traj[:, -2]).norm(dim=-1).mean(dim=1) / cfg.dt, "traj": traj}
+    out = {"chamfer": ch, "close_pairs": close_pairs(final, d_min),
+           "uniformity": spacing_cv(final), **slot_metrics(final, Q, d_min, cell.get("anchor")),
+           "speed": (traj[:, -1] - traj[:, -2]).norm(dim=-1).mean(dim=1) / cfg.dt, "traj": traj}
+    if "oracle_chamfer" in cell:                     # benchmark cells; one-off scenes have no optimum
+        out["ratio"] = (ch + eps) / (cell["oracle_chamfer"] + eps)
+    if form:
+        out["curve"] = slot_error_curve(traj, Q, d_min)
+        out["steps_to_form"] = steps_to_form(out["curve"])
+    return out
 
 
-def evaluate_benchmark(policy, cfg, split: str = "train", cells=GRID) -> list[dict]:
-    """Score a controller on every cell of the benchmark. One summary row per cell."""
+def _nanmedian(x):
+    x = x[~torch.isnan(x)]
+    return float(x.median()) if len(x) else float("nan")
+
+
+def evaluate_benchmark(policy, cfg, split: str = "train", ns=BENCH_N, root=BENCH_DIR, form: bool = False) -> list[dict]:
+    """Score a controller on every cell of the benchmark. One summary row per cell (means over its scenes)."""
     rows = []
-    for n, m in cells:
-        cell = load_cell(n, m, split)
-        r = evaluate_cell(policy, cell, cfg)
-        rows.append({"n": n, "m": m, "scenes": len(cell["family"]),
-                     "ratio": float(torch.exp(torch.log(r["ratio"]).mean())),      # geometric mean
-                     "chamfer": float(r["chamfer"].mean()), "oracle": float(cell["oracle_chamfer"].mean()),
-                     "close_pairs": float(r["close_pairs"].mean()),
-                     "oracle_close_pairs": float(cell["oracle_close_pairs"].mean()),
-                     "uniformity": float(r["uniformity"].mean()),
-                     "oracle_uniformity": float(spacing_cv(cell["oracle_final"]).mean())})
+    for n in ns:
+        cell = load_cell(n, split, root)
+        r = evaluate_cell(policy, cell, cfg, form=form)
+        row = {"n": n, "scenes": len(cell["family"]),
+               "slot_error": float(r["slot_error"].mean()), "filled": float(r["filled"].mean()),
+               "filled_anchor": float(r["filled_anchor"].mean()), "filled_fill": float(r["filled_fill"].mean()),
+               "shared_goals": float(r["shared_goals"].mean()),
+               "ratio": float(torch.exp(torch.log(r["ratio"]).mean())),      # geometric mean
+               "chamfer": float(r["chamfer"].mean()), "close_pairs": float(r["close_pairs"].mean()),
+               "uniformity": float(r["uniformity"].mean())}
+        for k in ("chamfer", "close_pairs", "slot_error", "filled", "filled_anchor", "filled_fill", "shared_goals"):
+            row[f"oracle_{k}"] = float(cell[f"oracle_{k}"].float().mean())
+        row["oracle_uniformity"] = float(spacing_cv(cell["oracle_final"]).mean())
+        if form:
+            row["formed"] = float((~torch.isnan(r["steps_to_form"])).float().mean())   # share that formed at all
+            row["steps_to_form"] = _nanmedian(r["steps_to_form"])                       # median over those
+        rows.append(row)
     return rows
 
 
+def overall(rows, key: str = "slot_error") -> float:
+    """One number for the whole benchmark: mean over cells (geometric mean for the ratio)."""
+    vals = [r[key] for r in rows]
+    return float(np.exp(np.mean(np.log(vals)))) if key == "ratio" else float(np.nanmean(vals))
+
+
 def overall_ratio(rows) -> float:
-    """Geometric mean of the per-cell ratios: one number for the whole grid."""
-    return float(np.exp(np.mean([np.log(r["ratio"]) for r in rows])))
+    return overall(rows, "ratio")
 
 
 def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: SharedMLP | None = None):
@@ -80,8 +105,9 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
 
     run_dir: where to save best.pt, last.pt and history.json (None: don't save).
     callback(history): called every callback_every iterations (live plots in the notebook).
-    Early stopping: stop when the benchmark ratio has not improved by at least
-    train.min_delta (relative) for train.patience validations in a row.
+    Validation score = mean slot error over the benchmark cells (training shapes).
+    Early stopping: stop when it has not improved by at least train.min_delta
+    (relative) for train.patience validations in a row.
     """
     tc = cfg.train
     torch.manual_seed(cfg.seed)
@@ -101,18 +127,19 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
         """Score the benchmark; save the best weights. Returns True if training should stop early."""
         nonlocal best, since_best
         rows = evaluate_benchmark(policy, cfg, "train")
-        val = {"it": it, "ratio": overall_ratio(rows), "cells": rows,
-               "close_pairs": float(np.mean([r["close_pairs"] for r in rows])),
-               "uniformity": float(np.mean([r["uniformity"] for r in rows]))}
+        val = {"it": it, "score": overall(rows, "slot_error"), "slot_error": overall(rows, "slot_error"),
+               "filled": overall(rows, "filled"), "ratio": overall_ratio(rows), "cells": rows,
+               "close_pairs": overall(rows, "close_pairs"), "uniformity": overall(rows, "uniformity")}
         history["val"].append(val)
-        if val["ratio"] < best * (1 - min_delta):
+        if val["score"] < best * (1 - min_delta):
             since_best = 0
         else:
             since_best += 1
-        if val["ratio"] < best:
-            best = val["ratio"]
+        if val["score"] < best:
+            best = val["score"]
             if run_dir:
-                policy.save(run_dir / "best.pt", config=to_dict(cfg), it=it, val_ratio=val["ratio"])
+                policy.save(run_dir / "best.pt", config=to_dict(cfg), it=it, val_score=val["score"],
+                            val_filled=val["filled"])
         return bool(patience) and since_best >= patience
 
     for it in range(tc.iters):
@@ -121,9 +148,9 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
             if callback:
                 callback(history)
             break
-        n, m = GRID[int(rng.integers(len(GRID)))]
+        n = sample_n(rng, N_RANGE)
         T = rollout_length(it, tc.curriculum, cfg.steps)
-        pos0, vel0, Q, d_min = make_batch(tc.batch_size, n, m, rng, TRAIN_FAMILIES)
+        pos0, vel0, Q, d_min = make_batch(tc.batch_size, n, rng, TRAIN_FAMILIES)
 
         traj, accs = rollout_closed_loop(pos0, vel0, Q, d_min, policy.act, cfg, steps=T, tbptt=tc.tbptt)
         loss, parts = total_loss(traj, accs, Q, d_min, cfg.loss)
@@ -135,7 +162,7 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
             opt.step()
         sched.step()
 
-        history["train"].append({"it": it, "n": n, "m": m, "T": T, "loss": loss.item(), **parts,
+        history["train"].append({"it": it, "n": n, "T": T, "loss": loss.item(), **parts,
                                  "grad_norm": grad_norm, "lr": sched.get_last_lr()[0],
                                  "time": time.time() - start})
         if it == tc.iters - 1:

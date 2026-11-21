@@ -517,3 +517,173 @@ Version 2:
   [x] notebook runs end to end; policy saved to results/models/
   [ ] optional: crowding in dense swarms (collision weight), M = N cells
   [ ] commit
+
+
+==============================================================================
+PHASE 2, VERSION 3: ONE GOAL SLOT PER DRONE
+==============================================================================
+
+Direction (decided): slot-based formation, drones = goals (M = N). The pitch
+is "decentralized, communication-free, learned formation via differentiable
+physics" against a centralized Hungarian-assignment baseline (Phase 3). Kept
+from v2: point-mass sim, shared MLP (39 -> 64 -> 64 -> 2), BPTT training,
+Chamfer + collision (+ spacing) loss / s^2, cosine lr, benchmark + early
+stopping.
+
+------------------------------------------------------------------------------
+1. WHAT CHANGED (v2 -> v3) AND WHY
+------------------------------------------------------------------------------
+
+  Goals       v2: M = 1-8 x N points spread evenly by length (sample_strokes).
+              v3: exactly N goal SLOTS from swarm/layout.py: a slot at every
+              stroke end, corner (turn > 35 deg) and junction ("anchors"),
+              the rest spread evenly, no two slots closer than 0.6 spacings.
+              Why: drone shows place one drone per slot; with M > N, corners
+              and short strokes were cut (an M lost its points).
+  Sizes       v2: 11 fixed (N, M) cells.  v3: N drawn uniformly from 8-96
+              for every batch.  Why: one policy for any swarm size.
+  Text        v2: hand-made A-Z font.  v3: Hershey Simplex (single stroke,
+              A-Z and 0-9).  Training families add "random_string" (1-4
+              letters/digits); "letters" is 1-2 letters. Strings must pass the
+              feature-size rule for the batch's N or are redrawn.
+  Held out    star, heart, spiral, words HI UMD LOVE FIRE MARRY ME, and 12
+              fixed strings. None can be generated in training (excluded by
+              exact string; MARRY ME also excludes MARRY and ME).
+  Rule        feature-size rule along-the-shape threshold 3 -> 6 spacings
+              (sharp Hershey corners failed at any N with 3).
+  Scoring     v2: ratio to the per-scene optimum (Chamfer).  v3: slot
+              metrics from one-to-one matching (below). The ratio is kept as a
+              secondary number; with M = N the optimum is ~0, so the ratio is
+              mostly Chamfer / (0.01 s^2).
+  Selection   best checkpoint and early stopping use the mean slot error
+              (smooth) instead of the ratio.
+  Benchmark   data/benchmark_v3/, N in {8, 16, 24, 32, 48, 64, 96}, 4 scenes
+              per family per N (36 training-family scenes, up to 20 held-out),
+              per-scene optimum stored with its slot metrics.
+  Names       v3 outputs: runs/phase2_v3_<exp>/, results/models/
+              phase2_v3_<exp>.pt, results/*/phase2_v3_*. v2 files untouched;
+              v2 notebooks archived in notebooks/v2/.
+
+------------------------------------------------------------------------------
+2. SLOT METRICS (swarm/metrics.py)
+------------------------------------------------------------------------------
+
+All at the final step, per scene, then averaged. Distances in drone spacings
+s = outline length / N (so scenes of any size compare).
+
+  Matching     drones and slots are paired one-to-one by the Hungarian
+               algorithm (scipy linear_sum_assignment), minimizing the total
+               drone-slot distance.
+  slot error   mean matched distance / s.  0 = every slot hit exactly.
+  slots filled share of slots whose matched drone is within d_min = 0.4 s.
+               Also split into anchor slots and fill slots.
+  steps to     first step t after which the slot error stays below 0.5
+  form         spacings until the end of the run (slot error computed at
+               every step). nan if never; reported as the median over the
+               scenes that formed, plus "formed" = share that did.
+  shared goals share of slots that are the NEAREST slot of 2+ drones: a
+               pile-up that leaves a neighbor empty (not matching-based; it
+               shows why slots are empty).
+
+Chamfer does not see a pile-up: two drones on one slot and an empty slot one
+spacing away cost about as much as a slightly uneven formation. The matching
+metrics do.
+
+------------------------------------------------------------------------------
+3. SEEDS (fixed: every run and every baseline sees the same scenes)
+------------------------------------------------------------------------------
+
+  Benchmark       BENCH_SEED = 2026. Cell for N = BENCH_N[i], split j
+                  (0 = train, 1 = held-out) is built with seed 2026 + 100 i + j:
+                  N=8: 2026/2027, 16: 2126/2127, 24: 2226/2227, 32: 2326/2327,
+                  48: 2426/2427, 64: 2526/2527, 96: 2626/2627.
+                  Stored in each cell file ("seed") and in index.json.
+  Held-out        HELDOUT_STRING_SEED = 838 drew (length 1-4, A-Z 0-9):
+  strings         8, A, 63, 22, NY4, ODP, PH0, 0TO, 6F2L, G, CS, W
+                  (draw_heldout_strings(); a test checks the list still matches)
+  Training        cfg.seed = 0 (torch and numpy generators in train()).
+  Demos           text_scene(text, n, seed=0): start positions and transform.
+  Phase 1 text    starts: torch seed 0; random string: numpy seed 1 -> "S18".
+                  The text plans (100 steps) score the shape at EVERY step
+                  (optimize_plan(..., hold_frac=1.0)). Scored on the last
+                  frame only, nothing rewards arriving early: the optimizer
+                  spread the motion over the run and the drones arrived just
+                  as it ended (more steps only made them slower). Scored at
+                  every step, they move ~1.6x faster, form by step 19-22 on
+                  HI and A7, then hold; slots filled rose on 4 of 6 strings.
+                  The benchmark optimum still uses the last frame (hold_frac 0),
+                  so v3 scores stay comparable.
+
+Fewest drones that keep each held-out text readable: HI 10, UMD 26, FIRE 38,
+LOVE 39, MARRY ME 92; strings: 8 31, A 5, 63 19, 22 18, NY4 32, ODP 26,
+PH0 25, 0TO 24, 6F2L 31, G 4, CS 18, W 5.
+
+------------------------------------------------------------------------------
+4. RESULTS (v3, and v2 vs v3 on the same v3 benchmark)
+------------------------------------------------------------------------------
+
+All four policies scored on data/benchmark_v3 (identical scenes and starts),
+means over N = 8, 16, 24, 32, 48, 64, 96. "form@" = median steps to form over
+the scenes that formed; "formed" = share that formed at all. v2 policies run
+unchanged (their input doesn't depend on N or M).
+
+  Training shapes   filled  slot err  form@  formed  shared  close pairs
+    v2 baseline       41%     2.84      53      8%     19%     17.5
+    v2 spacing        40%     2.54      45     10%     18%     11.8
+    v3 baseline       29%     1.84      67      2%     25%     15.1
+    v3 spacing        42%     1.60      64     12%     19%      6.8
+    optimum           72%     1.20                     12%      8.4
+
+  Held-out shapes   filled  slot err  form@  formed  shared  close pairs
+    v2 baseline       48%     1.36      37     13%     19%     13.0
+    v2 spacing        46%     1.39      42     16%     19%     11.1
+    v3 baseline       37%     1.30      55      8%     25%     19.1
+    v3 spacing        50%     1.18      32     15%     18%      7.3
+    optimum           76%     0.98                     13%     10.1
+
+  Filled by slot type (both splits)   anchors  fill slots
+    v3 spacing                          41%       49%
+    optimum                             84%       73%
+
+  Training: v3 baseline early-stopped at 1,500 iterations (best at 500,
+  19.5 min); v3 spacing at 2,000 (best at 1,000, 26.2 min). v2: 3,000, 16 min.
+  Words (v3 spacing, held out): UMD 72%, LOVE 65%, FIRE 52%, HI 50% (16
+  drones), MARRY ME 33% (96). 128 drones (beyond training): MARRY ME 30%,
+  HELLO WORLD 39%.
+
+Read: v3 spacing is the best policy on every slot measure, but only by a
+little over v2 (filled 42 vs 41%, held-out 50 vs 48%), and far from the
+per-scene optimum (72-76%). Slots per drone, not the training data, is the
+limiting factor.
+
+------------------------------------------------------------------------------
+5. PROBLEMS FOUND (v3)
+------------------------------------------------------------------------------
+
+  1. Loss / metric mismatch (expected, now measured). Chamfer has no
+     one-to-one constraint. During training the Chamfer loss kept falling
+     (4.7 -> 0.4 per s^2) while the slot error rose after iteration 500-1000;
+     18-25% of slots end as the nearest slot of 2+ drones. Even the per-scene
+     optimum, which also optimizes Chamfer, fills only 72-76% (53% at N=96).
+     Proposed fix (not implemented): a soft one-to-one matching term, e.g. a
+     Sinkhorn optimal-transport loss (GeomLoss-style, uniform weights, M = N)
+     added to or replacing Chamfer; its gradient pulls each drone toward its
+     share of the slots instead of the nearest one.
+  2. Stroke ends and corners are under-filled, not over-filled: anchors 41%
+     vs fill slots 49% (optimum 84 vs 73%). Drones bunch in the middle of
+     strokes and don't reach the ends. A matching loss addresses this too;
+     the observation could also flag anchor slots.
+  3. Model selection metric. Slot error (mean distance) and slots filled
+     disagree late in training: a few far-away drones raise the mean while
+     more slots fill. Early stopping on slot error kept the v3 baseline at
+     iteration 500 (29% filled); its last checkpoint fills 37% (held-out 45%).
+     For v3 spacing it doesn't matter (42% either way, fewer collisions at
+     the end). Next runs: select on slots filled, or on a matching loss.
+  4. Large swarms. Filled falls with N (v3 spacing 55% at N=8 -> 33% at 96);
+     almost no scene with N >= 32 stays below 0.5 spacings of slot error, so
+     "steps to form" is only defined for small N (medians come from 2-16% of
+     scenes; treat them with care).
+  5. Phase 1 lesson carried over: scoring only the last frame makes plans
+     arrive just in time. Phase 1 text plans now score every step
+     (hold_frac=1.0). The policy scores the last 20% of steps; the benchmark
+     optimum still uses the last frame (kept for comparability).

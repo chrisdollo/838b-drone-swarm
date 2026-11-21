@@ -1,0 +1,292 @@
+[
+ {
+  "n": 8,
+  "split": "train",
+  "seed": 2026,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "7",
+   "B",
+   "J",
+   "L",
+   "O",
+   "P",
+   "V",
+   "X"
+  ],
+  "oracle_chamfer": 0.002456346293911338,
+  "oracle_slot_error": 0.27434563636779785,
+  "oracle_filled": 0.8506944179534912,
+  "oracle_close_pairs": 0.9722222089767456,
+  "d_min_mean": 0.07828231900930405
+ },
+ {
+  "n": 8,
+  "split": "heldout",
+  "seed": 2027,
+  "scenes": 8,
+  "skipped": [
+   "star",
+   "spiral",
+   "word"
+  ],
+  "texts": [
+   "A",
+   "W"
+  ],
+  "oracle_chamfer": 0.004559867084026337,
+  "oracle_slot_error": 0.229407399892807,
+  "oracle_filled": 0.8125,
+  "oracle_close_pairs": 0.875,
+  "d_min_mean": 0.11736807227134705
+ },
+ {
+  "n": 16,
+  "split": "train",
+  "seed": 2126,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "B",
+   "D",
+   "H",
+   "KG",
+   "M",
+   "N",
+   "Y"
+  ],
+  "oracle_chamfer": 0.0007126399432308972,
+  "oracle_slot_error": 0.3812810778617859,
+  "oracle_filled": 0.8315972089767456,
+  "oracle_close_pairs": 1.7777777910232544,
+  "d_min_mean": 0.04285675659775734
+ },
+ {
+  "n": 16,
+  "split": "heldout",
+  "seed": 2127,
+  "scenes": 16,
+  "skipped": [
+   "spiral"
+  ],
+  "texts": [
+   "A",
+   "G",
+   "HI"
+  ],
+  "oracle_chamfer": 0.001411220757290721,
+  "oracle_slot_error": 0.37128984928131104,
+  "oracle_filled": 0.8125,
+  "oracle_close_pairs": 2.1875,
+  "d_min_mean": 0.05293501913547516
+ },
+ {
+  "n": 24,
+  "split": "train",
+  "seed": 2226,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "19",
+   "3",
+   "7Q1",
+   "D",
+   "IY",
+   "J",
+   "L7",
+   "OD"
+  ],
+  "oracle_chamfer": 0.0004505449323914945,
+  "oracle_slot_error": 0.730338454246521,
+  "oracle_filled": 0.7650463581085205,
+  "oracle_close_pairs": 4.361111164093018,
+  "d_min_mean": 0.0267600417137146
+ },
+ {
+  "n": 24,
+  "split": "heldout",
+  "seed": 2227,
+  "scenes": 20,
+  "skipped": [],
+  "texts": [
+   "63",
+   "A",
+   "G",
+   "HI",
+   "PH0",
+   "UMD"
+  ],
+  "oracle_chamfer": 0.0008081336272880435,
+  "oracle_slot_error": 0.43653449416160583,
+  "oracle_filled": 0.800000011920929,
+  "oracle_close_pairs": 3.5999999046325684,
+  "d_min_mean": 0.037585463374853134
+ },
+ {
+  "n": 32,
+  "split": "train",
+  "seed": 2326,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "4",
+   "8XR",
+   "E",
+   "L",
+   "LP",
+   "P",
+   "WN",
+   "Y"
+  ],
+  "oracle_chamfer": 0.00020918174413964152,
+  "oracle_slot_error": 0.7662703990936279,
+  "oracle_filled": 0.7482638955116272,
+  "oracle_close_pairs": 5.05555534362793,
+  "d_min_mean": 0.019209938123822212
+ },
+ {
+  "n": 32,
+  "split": "heldout",
+  "seed": 2327,
+  "scenes": 20,
+  "skipped": [],
+  "texts": [
+   "0TO",
+   "63",
+   "HI",
+   "PH0",
+   "UMD"
+  ],
+  "oracle_chamfer": 0.0005109129124321043,
+  "oracle_slot_error": 0.5816389918327332,
+  "oracle_filled": 0.8031250238418579,
+  "oracle_close_pairs": 5.25,
+  "d_min_mean": 0.02930707298219204
+ },
+ {
+  "n": 48,
+  "split": "train",
+  "seed": 2426,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "3",
+   "921",
+   "B",
+   "C",
+   "CM",
+   "I",
+   "R",
+   "R5A4"
+  ],
+  "oracle_chamfer": 0.00012078395957360044,
+  "oracle_slot_error": 1.1186517477035522,
+  "oracle_filled": 0.7112268805503845,
+  "oracle_close_pairs": 8.916666984558105,
+  "d_min_mean": 0.013419877737760544
+ },
+ {
+  "n": 48,
+  "split": "heldout",
+  "seed": 2427,
+  "scenes": 20,
+  "skipped": [],
+  "texts": [
+   "0TO",
+   "22",
+   "G",
+   "HI",
+   "LOVE"
+  ],
+  "oracle_chamfer": 0.00026267339126206934,
+  "oracle_slot_error": 0.9413900375366211,
+  "oracle_filled": 0.7510417103767395,
+  "oracle_close_pairs": 9.600000381469727,
+  "d_min_mean": 0.019227929413318634
+ },
+ {
+  "n": 64,
+  "split": "train",
+  "seed": 2526,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "C",
+   "CD",
+   "E7I",
+   "G6SF",
+   "MA",
+   "RI",
+   "SC",
+   "V"
+  ],
+  "oracle_chamfer": 8.351026190211996e-05,
+  "oracle_slot_error": 1.5908557176589966,
+  "oracle_filled": 0.6323784589767456,
+  "oracle_close_pairs": 13.44444465637207,
+  "d_min_mean": 0.010818595997989178
+ },
+ {
+  "n": 64,
+  "split": "heldout",
+  "seed": 2527,
+  "scenes": 20,
+  "skipped": [],
+  "texts": [
+   "0TO",
+   "6F2L",
+   "CS",
+   "FIRE",
+   "HI",
+   "UMD"
+  ],
+  "oracle_chamfer": 0.00013180791574995965,
+  "oracle_slot_error": 1.144451379776001,
+  "oracle_filled": 0.7562500238418579,
+  "oracle_close_pairs": 12.899999618530273,
+  "d_min_mean": 0.013982671312987804
+ },
+ {
+  "n": 96,
+  "split": "train",
+  "seed": 2626,
+  "scenes": 36,
+  "skipped": [],
+  "texts": [
+   "3KH",
+   "B",
+   "BQ",
+   "FT",
+   "HA",
+   "K",
+   "T",
+   "XB"
+  ],
+  "oracle_chamfer": 4.452014763955958e-05,
+  "oracle_slot_error": 3.5061025619506836,
+  "oracle_filled": 0.5292245745658875,
+  "oracle_close_pairs": 24.44444465637207,
+  "d_min_mean": 0.00683854054659605
+ },
+ {
+  "n": 96,
+  "split": "heldout",
+  "seed": 2627,
+  "scenes": 20,
+  "skipped": [],
+  "texts": [
+   "63",
+   "FIRE",
+   "G",
+   "HI",
+   "NY4",
+   "UMD"
+  ],
+  "oracle_chamfer": 9.030102228280157e-05,
+  "oracle_slot_error": 3.1775035858154297,
+  "oracle_filled": 0.5916666984558105,
+  "oracle_close_pairs": 36.5,
+  "d_min_mean": 0.008995839394629002
+ }
+]

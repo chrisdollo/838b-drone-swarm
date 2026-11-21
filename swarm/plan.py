@@ -8,16 +8,20 @@ compared against.
 
 import torch
 
-from swarm.losses import chamfer, collision_loss
+from swarm.losses import chamfer, collision_loss, shape_loss
 from swarm.sim import rollout
 
 
 def optimize_plan(pos0, Q, cfg, iters: int = 300, lr: float = 0.05, cosine: bool = True,
-                  d_min=None, w_collision: float = 0.0, log_every: int = 0):
+                  d_min=None, w_collision: float = 0.0, hold_frac: float = 0.0, log_every: int = 0):
     """Optimize accelerations for each scene of a batch. Scenes don't interact.
 
-    pos0 [S, N, dim], Q [S, M, dim]. Loss: final-frame Chamfer, plus
-    w_collision * collision penalty over all steps if d_min is given.
+    pos0 [S, N, dim], Q [S, M, dim]. Loss: Chamfer, plus w_collision *
+    collision penalty over all steps if d_min is given.
+    hold_frac: share of the steps the Chamfer is averaged over, counted from
+    the end. 0 = final frame only (the drones arrive just in time: nothing
+    rewards being early). 1 = every step: being away from the shape costs at
+    every moment, so the drones go as fast as the physics allows and then hold.
     cosine: decay the learning rate to 0 (Phase 1 lesson: a constant lr makes
     Adam oscillate and diverge near the optimum).
     Returns dict: accs [S, T, N, dim], traj [S, T+1, N, dim], history (loss per iteration).
@@ -30,7 +34,7 @@ def optimize_plan(pos0, Q, cfg, iters: int = 300, lr: float = 0.05, cosine: bool
     history = []
     for k in range(iters):
         traj = rollout(pos0, vel0, cfg.a_max * torch.tanh(raw), cfg)
-        loss = chamfer(traj[:, -1], Q)
+        loss = shape_loss(traj, Q, hold_frac) if hold_frac else chamfer(traj[:, -1], Q)
         if d_min is not None and w_collision:
             loss = loss + w_collision * collision_loss(traj, d_min)
         opt.zero_grad()

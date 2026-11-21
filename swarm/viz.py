@@ -89,8 +89,9 @@ def save_gif(traj, Q, path, every: int = 2, fps: int = 20, hold_s: float = 1.0, 
 def plot_training(history, path=None):
     """Phase 2 training curves. Returns the figure.
 
-    Left: benchmark ratio to the per-scene optimum (1 = optimal) and the
-    normalized training shape loss. Middle: penalties. Right: gradient norm and curriculum.
+    Left: normalized training shape loss and the validation score (v3: mean
+    slot error in drone spacings; v2 histories: ratio to the per-scene optimum).
+    Middle: penalties. Right: gradient norm and curriculum.
     """
     tr, val = history["train"], history["val"]
     it = [h["it"] for h in tr]
@@ -98,10 +99,14 @@ def plot_training(history, path=None):
 
     ax = axs[0]
     ax.semilogy(it, [h["shape"] for h in tr], color=AGENT, lw=0.6, alpha=0.6, label="shape loss / s² (train)")
-    if val:
+    if val and "slot_error" in val[0]:
+        ax.semilogy([v["it"] for v in val], [v["slot_error"] for v in val], "o-", color=TARGET, ms=4, lw=1.6,
+                    label="benchmark: slot error (spacings)")
+        ax.axhline(0.5, color="0.5", ls=":", lw=1, label="formed (0.5 spacings)")
+    elif val:
         ax.semilogy([v["it"] for v in val], [v["ratio"] for v in val], "o-", color=TARGET, ms=4, lw=1.6,
                     label="benchmark: × per-scene optimum")
-    ax.axhline(1, color="0.5", ls=":", lw=1)
+        ax.axhline(1, color="0.5", ls=":", lw=1)
     ax.set_title("Shape error", fontsize=10)
     ax.set_xlabel("iteration")
     ax.legend(frameon=False, fontsize=8)
@@ -135,17 +140,18 @@ def plot_training(history, path=None):
 
 
 def plot_benchmark_overview(path=None, finals=None, title=None):
-    """Every grid cell x every shape family: one example scene each. Returns the figure.
+    """Every benchmark size N x every shape family: one example scene each. Returns the figure.
 
-    Green = goals. Blue = final positions: the per-scene optimum by default, or
-    finals[(n, m, split)] = [S, N, 2] from any method (e.g. the trained policy).
+    Green = goal slots (filled squares = anchors: stroke ends, corners, junctions).
+    Blue = final positions: the per-scene optimum by default, or
+    finals[(n, split)] = [S, N, 2] from any method (e.g. the trained policy).
     """
-    from swarm.dataset import GRID, HELDOUT_FAMILIES, TRAIN_FAMILIES, load_cell
+    from swarm.dataset import BENCH_N, HELDOUT_FAMILIES, TRAIN_FAMILIES, load_cell
 
     fams = TRAIN_FAMILIES + HELDOUT_FAMILIES
-    fig, axs = plt.subplots(len(GRID), len(fams), figsize=(1.35 * len(fams) + 1.2, 1.35 * len(GRID)), dpi=100)
-    for r, (n, m) in enumerate(GRID):
-        cells = {sp: load_cell(n, m, sp) for sp in ("train", "heldout")}
+    fig, axs = plt.subplots(len(BENCH_N), len(fams), figsize=(1.3 * len(fams) + 1.0, 1.3 * len(BENCH_N)), dpi=100)
+    for r, n in enumerate(BENCH_N):
+        cells = {sp: load_cell(n, sp) for sp in ("train", "heldout")}
         for c, fam in enumerate(fams):
             ax = axs[r, c]
             ax.set_xlim(-0.5, 0.5)
@@ -158,18 +164,21 @@ def plot_benchmark_overview(path=None, finals=None, title=None):
             split = "train" if fam in TRAIN_FAMILIES else "heldout"
             cell = cells[split]
             if r == 0:
-                ax.set_title(fam.replace("random_", "rand. ") + ("*" if split == "heldout" else ""), fontsize=8)
+                name = {"random_polygon": "rand. polygon", "random_polyline": "rand. polyline",
+                        "random_string": "rand. string", "heldout_string": "held-out str."}.get(fam, fam)
+                ax.set_title(name + ("*" if split == "heldout" else ""), fontsize=8)
             if fam in cell["skipped"]:
                 ax.text(0, 0, "too few\ndrones", ha="center", va="center", fontsize=7, color="0.55")
                 continue
             i = cell["family"].index(fam)
-            Q = cell["goals"][i]
-            P = (finals[(n, m, split)] if finals else cell["oracle_final"])[i]
-            ax.scatter(Q[:, 0], Q[:, 1], s=3, facecolors="none", edgecolors=TARGET, lw=0.5)
-            ax.scatter(P[:, 0], P[:, 1], s=4 if n >= 32 else 7, color=AGENT, zorder=3)
-        axs[r, 0].set_ylabel(f"N={n}\nM={m}", rotation=0, ha="right", va="center", fontsize=8, labelpad=12)
-    fig.suptitle(title or "Benchmark: one example per cell and family. Green = goals, blue = per-scene optimum. "
-                 "* = held out from training", fontsize=10, y=0.997)
+            Q, a = cell["goals"][i], cell["anchor"][i]
+            P = (finals[(n, split)] if finals else cell["oracle_final"])[i]
+            ax.scatter(Q[~a, 0], Q[~a, 1], s=4, facecolors="none", edgecolors=TARGET, lw=0.5)
+            ax.scatter(Q[a, 0], Q[a, 1], s=5, marker="s", color=TARGET, lw=0)
+            ax.scatter(P[:, 0], P[:, 1], s=3 if n >= 48 else 6, color=AGENT, zorder=3)
+        axs[r, 0].set_ylabel(f"N={n}", rotation=0, ha="right", va="center", fontsize=8, labelpad=10)
+    fig.suptitle(title or "Benchmark: one example per size and family. Green = goal slots (squares = anchors), "
+                 "blue = per-scene optimum. * = held out", fontsize=10, y=0.997)
     fig.tight_layout(rect=(0, 0, 1, 0.99))
     if path:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -177,20 +186,36 @@ def plot_benchmark_overview(path=None, finals=None, title=None):
     return fig
 
 
-def plot_ratio_grid(rows_by_split: dict, path=None, title="× per-scene optimum (1 = optimal)"):
-    """Bar-free table figure: ratio to the optimum for every cell, one column per split. Returns the figure."""
-    splits = list(rows_by_split)
-    cells = [(r["n"], r["m"]) for r in rows_by_split[splits[0]]]
-    vals = np.array([[rows_by_split[sp][i]["ratio"] for sp in splits] for i in range(len(cells))])
-    fig, ax = plt.subplots(figsize=(1.6 + 1.5 * len(splits), 0.32 * len(cells) + 1.0), dpi=110)
-    im = ax.imshow(np.log2(vals), cmap="RdYlGn_r", vmin=0, vmax=3, aspect="auto")
-    for i in range(len(cells)):
-        for j in range(len(splits)):
-            ax.text(j, i, f"{vals[i, j]:.2f}×", ha="center", va="center", fontsize=9)
-    ax.set_xticks(range(len(splits)), splits)
-    ax.set_yticks(range(len(cells)), [f"N={n}, M={m}" for n, m in cells], fontsize=8)
-    ax.set_title(title, fontsize=10)
-    fig.colorbar(im, ax=ax, ticks=[0, 1, 2, 3], format=lambda x, _: f"{2 ** x:.0f}×", shrink=0.8)
+def plot_scores_by_n(rows_by_label: dict, path=None, title="", oracle_rows=None, colors=None):
+    """Slot metrics against swarm size. rows_by_label: {label: evaluate_benchmark rows}. Returns the figure.
+
+    Panels: slots filled, slot error, steps to form (if the rows have it). Dashed
+    black = per-scene optimum (from oracle_rows, if given).
+    """
+    keys = [("filled", "slots filled (share of goals)", False), ("slot_error", "slot error (drone spacings)", True)]
+    if all("steps_to_form" in rows[0] for rows in rows_by_label.values()):
+        keys.append(("steps_to_form", "steps to form (median)", False))
+    fig, axs = plt.subplots(1, len(keys), figsize=(4.6 * len(keys), 3.4), dpi=100)
+    for ax, (key, label, log) in zip(np.atleast_1d(axs), keys):
+        for j, (name, rows) in enumerate(rows_by_label.items()):
+            col = (colors or {}).get(name, plt.cm.tab10(j))
+            ls = "--" if "held" in name else "-"
+            ax.plot([r["n"] for r in rows], [r[key] for r in rows], "o" + ls, ms=4, lw=1.5, color=col, label=name)
+        if oracle_rows is not None and f"oracle_{key}" in oracle_rows[0]:
+            ax.plot([r["n"] for r in oracle_rows], [r[f"oracle_{key}"] for r in oracle_rows], "k:", lw=1.2,
+                    label="per-scene optimum")
+        if key == "slot_error":
+            ax.axhline(0.5, color=WARN, lw=0.8, ls=":")
+        if key == "filled":
+            ax.set_ylim(0, 1.02)
+        if log:
+            ax.set_yscale("log")
+        ax.set_xlabel("drones N (= goals)")
+        ax.set_title(label, fontsize=10)
+        ax.grid(alpha=0.3, which="both")
+    np.atleast_1d(axs)[0].legend(frameon=False, fontsize=7)
+    if title:
+        fig.suptitle(title, fontsize=11)
     fig.tight_layout()
     if path:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

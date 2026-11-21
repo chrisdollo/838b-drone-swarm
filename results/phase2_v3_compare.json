@@ -1,0 +1,145 @@
+{
+ "v2 baseline": {
+  "iterations": 3000,
+  "minutes": 15.995968965689341,
+  "stopped_at": null,
+  "best_it": 3000,
+  "train": {
+   "filled": 0.4062913273062025,
+   "slot_error": 2.8369656120027815,
+   "steps_to_form": 52.666666666666664,
+   "formed": 0.07936508128685611,
+   "shared_goals": 0.19345237953322275,
+   "filled_anchor": 0.5088494760649545,
+   "filled_fill": 0.4149968581540244,
+   "close_pairs": 17.484127240521566,
+   "uniformity": 0.6331624388694763,
+   "ratio": 3.8109743379843724
+  },
+  "heldout": {
+   "filled": 0.4759672667298998,
+   "slot_error": 1.3635077306202479,
+   "steps_to_form": 36.666666666666664,
+   "formed": 0.132142857249294,
+   "shared_goals": 0.19449404733521597,
+   "filled_anchor": 0.32013807552201407,
+   "filled_fill": 0.5225132278033665,
+   "close_pairs": 13.033928394317627,
+   "uniformity": 0.5620302983692714,
+   "ratio": 3.317857811258472
+  },
+  "clumped_frac": 0.3007264529058116
+ },
+ "v2 spacing": {
+  "iterations": 3000,
+  "minutes": 16.24113874832789,
+  "stopped_at": null,
+  "best_it": 2250,
+  "train": {
+   "filled": 0.3962466972214835,
+   "slot_error": 2.5375727840832303,
+   "steps_to_form": 44.666666666666664,
+   "formed": 0.09523809408502919,
+   "shared_goals": 0.1817542953150613,
+   "filled_anchor": 0.5315451323986053,
+   "filled_fill": 0.39855065303189413,
+   "close_pairs": 11.833333258117948,
+   "uniformity": 0.45738355815410614,
+   "ratio": 3.818157275306185
+  },
+  "heldout": {
+   "filled": 0.45941220436777386,
+   "slot_error": 1.3874521596091134,
+   "steps_to_form": 42.5,
+   "formed": 0.1642857146050249,
+   "shared_goals": 0.19360118891511643,
+   "filled_anchor": 0.430804648569652,
+   "filled_fill": 0.4884193752493177,
+   "close_pairs": 11.069643148354121,
+   "uniformity": 0.4460975612912859,
+   "ratio": 3.411502992850029
+  },
+  "clumped_frac": 0.15975701402805612
+ },
+ "v3 baseline": {
+  "iterations": 1500,
+  "minutes": 19.517951464653017,
+  "stopped_at": 1500,
+  "best_it": 500,
+  "train": {
+   "filled": 0.29427083262375425,
+   "slot_error": 1.8406858955110823,
+   "steps_to_form": 67.0,
+   "formed": 0.019841269989098822,
+   "shared_goals": 0.25047536194324493,
+   "filled_anchor": 0.3547585606575012,
+   "filled_fill": 0.2829565682581493,
+   "close_pairs": 15.083333356039864,
+   "uniformity": 0.9458626764161246,
+   "ratio": 6.872489050567328
+  },
+  "heldout": {
+   "filled": 0.3713541712079729,
+   "slot_error": 1.2993016157831465,
+   "steps_to_form": 55.0,
+   "formed": 0.08035714285714286,
+   "shared_goals": 0.24527529307774135,
+   "filled_anchor": 0.3705679902008602,
+   "filled_fill": 0.36635556391307283,
+   "close_pairs": 19.126785687037877,
+   "uniformity": 0.9653716172490802,
+   "ratio": 5.49471958069567
+  },
+  "clumped_frac": 0.4722570140280561
+ },
+ "v3 spacing": {
+  "iterations": 2000,
+  "minutes": 26.16006803115209,
+  "stopped_at": 2000,
+  "best_it": 1000,
+  "train": {
+   "filled": 0.42493386779512676,
+   "slot_error": 1.5998491559709822,
+   "steps_to_form": 64.33333333333333,
+   "formed": 0.11904762153114591,
+   "shared_goals": 0.18530919509274618,
+   "filled_anchor": 0.4602937272616795,
+   "filled_fill": 0.4358017955507551,
+   "close_pairs": 6.753968238830566,
+   "uniformity": 0.5054792080606733,
+   "ratio": 3.4951235389004043
+  },
+  "heldout": {
+   "filled": 0.504575891154153,
+   "slot_error": 1.1828320792743139,
+   "steps_to_form": 32.0,
+   "formed": 0.15357142899717605,
+   "shared_goals": 0.1811383898769106,
+   "filled_anchor": 0.3579803322042738,
+   "filled_fill": 0.5393376520701817,
+   "close_pairs": 7.274999891008649,
+   "uniformity": 0.4913523622921535,
+   "ratio": 3.0430276918618664
+  },
+  "clumped_frac": 0.1912575150300601
+ },
+ "optimum": {
+  "train": {
+   "filled": 0.7240616849490574,
+   "slot_error": 1.1954065135547094,
+   "shared_goals": 0.11656746161835534,
+   "filled_anchor": 0.8784814902714321,
+   "filled_fill": 0.7080993822642735,
+   "close_pairs": 8.424603257860456
+  },
+  "heldout": {
+   "filled": 0.7610119240624564,
+   "slot_error": 0.9831736768995013,
+   "shared_goals": 0.13050595351627894,
+   "filled_anchor": 0.7936277985572815,
+   "filled_fill": 0.748329656464713,
+   "close_pairs": 10.130357129233223
+  },
+  "clumped_frac": 0.2970941883767535
+ }
+}
