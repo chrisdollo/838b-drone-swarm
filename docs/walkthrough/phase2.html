@@ -252,7 +252,7 @@
         <tr><td>Runner</td><td>all</td><td><code>notebooks/phase2.ipynb</code></td></tr>
       </tbody>
     </table></div>
-    <p><strong>Running it.</strong> <code>notebooks/phase2.ipynb</code> builds or loads the benchmark, shows what a drone sees, trains with live curves (about 25 minutes on a laptop CPU; set <code>TRAIN = False</code> to reuse the last run), then scores every cell and makes the GIFs. The trained policy is copied to <code>results/models/phase2_policy.pt</code>, which git tracks. To follow one iteration in code, read the loop in <code>train.train()</code>: <code>make_batch</code> → <code>rollout_closed_loop</code> (which calls <code>policy.act</code> → <code>observe</code> → <code>SharedMLP.forward</code> → <code>sim.step</code>) → <code>total_loss</code> → <code>backward</code> → <code>clip_grad_norm_</code> → <code>opt.step</code>.</p>
+    <p><strong>Running it.</strong> <code>notebooks/phase2.ipynb</code> builds or loads the benchmark, shows what a drone sees, trains with live curves (about 25 minutes on a laptop CPU; set <code>TRAIN = False</code> to reuse the last run), then scores every cell and makes the GIFs. The trained policy is copied to <code>results/models/phase2_baseline.pt</code>, which git tracks. To follow one iteration in code, read the loop in <code>train.train()</code>: <code>make_batch</code> → <code>rollout_closed_loop</code> (which calls <code>policy.act</code> → <code>observe</code> → <code>SharedMLP.forward</code> → <code>sim.step</code>) → <code>total_loss</code> → <code>backward</code> → <code>clip_grad_norm_</code> → <code>opt.step</code>.</p>
   </section>
 
   <!-- 9 -->
@@ -283,7 +283,7 @@
   <!-- 10 -->
   <section id="results">
     <h2>10. Results (version 2)</h2>
-    <p>One training run: 3,000 iterations, 16 minutes on a laptop CPU. The trained policy is <code>results/models/phase2_policy.pt</code>.</p>
+    <p>One training run: 3,000 iterations, 16 minutes on a laptop CPU. The trained policy is <code>results/models/phase2_baseline.pt</code>.</p>
     <div class="tbl"><table>
       <thead><tr><th>Measure</th><th>Result</th></tr></thead>
       <tbody>

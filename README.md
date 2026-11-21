@@ -51,7 +51,7 @@ Before adding any neural network, we optimize the 100 × 32 accelerations of one
 Every drone runs the same 6,850-weight network on what it sees: its 6 nearest drones, its 8 nearest goals and whether each is already taken, the scene's collision distance and its own velocity. It is trained on a grid of 8–64 drones × 8–128 goals (16 minutes on a laptop CPU) and scored on a fixed benchmark against each scene's optimum, i.e. the Phase 1 method applied to that exact scene.
 
 <p align="center">
-  <img src="results/gifs/phase2_heldout.gif" alt="The policy forming a star, heart, spiral, LOVE and MARRY ME, none of which were in training" width="760">
+  <img src="results/gifs/phase2_baseline_heldout.gif" alt="The policy forming a star, heart, spiral, LOVE and MARRY ME, none of which were in training" width="760">
 </p>
 
 | Result | |

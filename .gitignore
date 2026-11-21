@@ -15,3 +15,7 @@ wandb/
 
 # OS
 .DS_Store
+
+# Tool caches
+.pytest_cache/
+.ipynb_checkpoints/

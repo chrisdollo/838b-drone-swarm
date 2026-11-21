@@ -56,6 +56,19 @@ def shape_loss(traj: torch.Tensor, Q: torch.Tensor, hold_frac: float = 0.0, per_
     return c if per_scene else c.mean()
 
 
+def _pair_penalty(P: torch.Tensor, radius: torch.Tensor) -> torch.Tensor:
+    """sum_{j != i} max(0, radius - |p_i - p_j|)^2, averaged over agents: [K] for frames P [K, N, dim], radius [K]."""
+    N = P.shape[1]
+    d = torch.sqrt(pairwise_sq_dist(P, P) + 1e-12)               # eps: sqrt has no slope at 0
+    off_diag = 1 - torch.eye(N, device=P.device, dtype=P.dtype)
+    return (torch.relu(radius.reshape(-1, 1, 1) - d) ** 2 * off_diag).sum(dim=2).mean(dim=1)
+
+
+def _per_frame(radius, B: int, frames: int, like: torch.Tensor) -> torch.Tensor:
+    r = torch.as_tensor(radius, dtype=like.dtype, device=like.device)
+    return (r.expand(B) if r.dim() == 0 else r).repeat_interleave(frames)
+
+
 def collision_loss(traj: torch.Tensor, d_min, per_scene: bool = False):
     """Soft collision penalty, averaged over steps and agents (and batch unless per_scene).
 
@@ -65,13 +78,37 @@ def collision_loss(traj: torch.Tensor, d_min, per_scene: bool = False):
     """
     B, T1, N, dim = traj.shape
     P = traj[:, 1:].reshape(B * (T1 - 1), N, dim)
-    d = torch.sqrt(pairwise_sq_dist(P, P) + 1e-12)               # eps: sqrt has no slope at 0
-    off_diag = 1 - torch.eye(N, device=traj.device, dtype=traj.dtype)
-    d_min = torch.as_tensor(d_min, dtype=traj.dtype, device=traj.device)
-    if d_min.dim() == 1:                                          # per scene -> per frame
-        d_min = d_min.repeat_interleave(T1 - 1).reshape(-1, 1, 1)
-    pen = (torch.relu(d_min - d) ** 2 * off_diag).sum(dim=2).mean(dim=1).reshape(B, T1 - 1).mean(dim=1)
+    pen = _pair_penalty(P, _per_frame(d_min, B, T1 - 1, traj)).reshape(B, T1 - 1).mean(dim=1)
     return pen if per_scene else pen.mean()
+
+
+def spacing_loss(traj: torch.Tensor, d_target, hold_frac: float = 0.2, per_scene: bool = False):
+    """Repulsion between drones closer than d_target, over the last hold_frac of the rollout.
+
+    Same soft form as the collision penalty, (d_target - distance)^2, but with a
+    larger radius (about the ideal drone spacing) and only once the formation
+    should be holding. It gives the push Chamfer lacks: two drones sitting on
+    the same stretch of shape score as well as two spread out under Chamfer,
+    but not here. This is the "repulsion loss" of PU-Net (Yu et al., CVPR 2018);
+    minimizers of repulsive energies on a curve are evenly spaced by arc length.
+    """
+    B, T1, N, dim = traj.shape
+    n = max(1, round(hold_frac * (T1 - 1)))
+    P = traj[:, -n:].reshape(B * n, N, dim)
+    pen = _pair_penalty(P, _per_frame(d_target, B, n, traj)).reshape(B, n).mean(dim=1)
+    return pen if per_scene else pen.mean()
+
+
+def spacing_cv(P: torch.Tensor) -> torch.Tensor:
+    """Uniformity score per scene, [B]: std / mean of each drone's nearest-neighbor distance.
+
+    0 = every drone has its nearest neighbor at exactly the same distance
+    (perfectly even); larger = clumps and gaps. Not a loss, a metric.
+    """
+    N = P.shape[1]
+    d = torch.sqrt(pairwise_sq_dist(P, P)) + torch.eye(N, device=P.device, dtype=P.dtype) * 1e9
+    nn = d.min(dim=2).values
+    return nn.std(dim=1) / nn.mean(dim=1)
 
 
 def effort_loss(accs: torch.Tensor) -> torch.Tensor:
@@ -82,14 +119,22 @@ def effort_loss(accs: torch.Tensor) -> torch.Tensor:
 def total_loss(traj, accs, Q, d_min, lcfg, d_min_frac: float = 0.4):
     """Weighted Phase 2 loss. d_min: [B] collision distance per scene; lcfg: the `loss` config section.
 
-    Shape and collision are divided by each scene's squared drone spacing
-    s^2 = (d_min / d_min_frac)^2. Both scale with s^2, so without this the
-    sparse 8-drone scenes would outweigh the dense 64-drone ones ~30x.
+    Shape, collision and spacing are divided by each scene's squared drone
+    spacing s^2 = (d_min / d_min_frac)^2. All scale with s^2, so without this
+    the sparse 8-drone scenes would outweigh the dense 64-drone ones ~30x.
+    The spacing term is on only if lcfg.w_spacing > 0 (radius = spacing_frac * s).
     Returns (loss tensor, dict of each term as a float for logging).
     """
-    s2 = (d_min / d_min_frac) ** 2
+    s = d_min / d_min_frac
+    s2 = s ** 2
     shape = (shape_loss(traj, Q, lcfg.hold_frac, per_scene=True) / s2).mean()
     coll = (collision_loss(traj, d_min, per_scene=True) / s2).mean()
     effort = effort_loss(accs)
     loss = shape + lcfg.w_collision * coll + lcfg.w_effort * effort
-    return loss, {"shape": shape.item(), "collision": coll.item(), "effort": effort.item()}
+    parts = {"shape": shape.item(), "collision": coll.item(), "effort": effort.item()}
+    w_sp = getattr(lcfg, "w_spacing", 0.0)
+    if w_sp:
+        sp = (spacing_loss(traj, getattr(lcfg, "spacing_frac", 0.8) * s, lcfg.hold_frac, per_scene=True) / s2).mean()
+        loss = loss + w_sp * sp
+        parts["spacing"] = sp.item()
+    return loss, parts

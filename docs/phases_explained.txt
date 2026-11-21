@@ -454,7 +454,7 @@ and occupancy distances stay differentiable.
   4 training with live curves (TRAIN = False reuses the last run)
   5 ratio for every cell  6 every cell and shape  7 held-out shapes incl.
   MARRY ME  8 self-healing  9 policy vs the Phase 1 plan
-  Writes results/models/phase2_policy.pt (tracked by git), results/figures/
+  Writes results/models/phase2_<experiment>.pt (tracked by git), results/figures/
   phase2_*.png, results/gifs/phase2_*.gif.
 
 --- tests ----------------------------------------------------------------------

@@ -63,15 +63,3 @@ def rollout_closed_loop(pos0: torch.Tensor, vel0: torch.Tensor, Q: torch.Tensor,
     out = (torch.stack(traj, dim=1), torch.stack(accs, dim=1))
     return (*out, vel) if return_state else out
 
-
-@torch.no_grad()
-def rollout_with_removal(pos0, vel0, Q, d_min, controller, cfg, steps: int, remove_at: int, keep: torch.Tensor):
-    """Self-healing test: run, delete some agents at step remove_at, keep running.
-
-    keep: bool [N], which agents survive. B must be 1. Returns a list of
-    steps+1 position frames ([N_t, dim]; N_t drops at remove_at) for viz.save_gif.
-    """
-    traj1, _, vel = rollout_closed_loop(pos0, vel0, Q, d_min, controller, cfg, steps=remove_at, return_state=True)
-    pos = traj1[:, -1][:, keep]
-    traj2, _ = rollout_closed_loop(pos, vel[:, keep], Q, d_min, controller, cfg, steps=steps - remove_at)
-    return [f for f in traj1[0]] + [f for f in traj2[0, 1:]]

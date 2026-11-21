@@ -20,7 +20,7 @@ import torch
 
 from swarm.config import to_dict
 from swarm.dataset import D_MIN_FRAC, GRID, TRAIN_FAMILIES, load_cell, make_batch
-from swarm.losses import chamfer, close_pairs, total_loss
+from swarm.losses import chamfer, close_pairs, spacing_cv, total_loss
 from swarm.policy import SharedMLP, policy_from_config
 from swarm.sim import rollout_closed_loop
 
@@ -50,6 +50,7 @@ def evaluate_cell(policy, cell: dict, cfg, steps: int | None = None) -> dict:
     ch = chamfer(final, Q, per_scene=True)
     eps = 0.01 * (d_min / D_MIN_FRAC) ** 2
     return {"chamfer": ch, "ratio": (ch + eps) / (cell["oracle_chamfer"] + eps), "close_pairs": close_pairs(final, d_min),
+            "uniformity": spacing_cv(final),
             "speed": (traj[:, -1] - traj[:, -2]).norm(dim=-1).mean(dim=1) / cfg.dt, "traj": traj}
 
 
@@ -63,7 +64,9 @@ def evaluate_benchmark(policy, cfg, split: str = "train", cells=GRID) -> list[di
                      "ratio": float(torch.exp(torch.log(r["ratio"]).mean())),      # geometric mean
                      "chamfer": float(r["chamfer"].mean()), "oracle": float(cell["oracle_chamfer"].mean()),
                      "close_pairs": float(r["close_pairs"].mean()),
-                     "oracle_close_pairs": float(cell["oracle_close_pairs"].mean())})
+                     "oracle_close_pairs": float(cell["oracle_close_pairs"].mean()),
+                     "uniformity": float(r["uniformity"].mean()),
+                     "oracle_uniformity": float(spacing_cv(cell["oracle_final"]).mean())})
     return rows
 
 
@@ -77,6 +80,8 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
 
     run_dir: where to save best.pt, last.pt and history.json (None: don't save).
     callback(history): called every callback_every iterations (live plots in the notebook).
+    Early stopping: stop when the benchmark ratio has not improved by at least
+    train.min_delta (relative) for train.patience validations in a row.
     """
     tc = cfg.train
     torch.manual_seed(cfg.seed)
@@ -85,24 +90,37 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
     opt = torch.optim.Adam(policy.parameters(), lr=tc.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=tc.iters, eta_min=tc.lr_min)
 
-    history = {"train": [], "val": []}
+    history = {"train": [], "val": [], "stopped_at": None}
     best = math.inf
+    patience, min_delta = getattr(tc, "patience", 0), getattr(tc, "min_delta", 0.0)
+    since_best = 0
     run_dir = Path(run_dir) if run_dir else None
     start = time.time()
 
     def validate(it):
-        nonlocal best
+        """Score the benchmark; save the best weights. Returns True if training should stop early."""
+        nonlocal best, since_best
         rows = evaluate_benchmark(policy, cfg, "train")
         val = {"it": it, "ratio": overall_ratio(rows), "cells": rows,
-               "close_pairs": float(np.mean([r["close_pairs"] for r in rows]))}
+               "close_pairs": float(np.mean([r["close_pairs"] for r in rows])),
+               "uniformity": float(np.mean([r["uniformity"] for r in rows]))}
         history["val"].append(val)
-        if run_dir and val["ratio"] < best:
+        if val["ratio"] < best * (1 - min_delta):
+            since_best = 0
+        else:
+            since_best += 1
+        if val["ratio"] < best:
             best = val["ratio"]
-            policy.save(run_dir / "best.pt", config=to_dict(cfg), it=it, val_ratio=val["ratio"])
+            if run_dir:
+                policy.save(run_dir / "best.pt", config=to_dict(cfg), it=it, val_ratio=val["ratio"])
+        return bool(patience) and since_best >= patience
 
     for it in range(tc.iters):
-        if it % tc.val_every == 0:                    # before the update: it 0 = untrained policy
-            validate(it)
+        if it % tc.val_every == 0 and validate(it):   # before the update: it 0 = untrained policy
+            history["stopped_at"] = it                # early stop: no improvement for `patience` checks
+            if callback:
+                callback(history)
+            break
         n, m = GRID[int(rng.integers(len(GRID)))]
         T = rollout_length(it, tc.curriculum, cfg.steps)
         pos0, vel0, Q, d_min = make_batch(tc.batch_size, n, m, rng, TRAIN_FAMILIES)
@@ -126,6 +144,6 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
             callback(history)
 
     if run_dir:
-        policy.save(run_dir / "last.pt", config=to_dict(cfg), it=tc.iters)
+        policy.save(run_dir / "last.pt", config=to_dict(cfg), it=history["train"][-1]["it"] + 1)
         (run_dir / "history.json").write_text(json.dumps(history))
     return policy, history

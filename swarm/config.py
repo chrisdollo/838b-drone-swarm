@@ -26,3 +26,16 @@ def to_dict(x):
 def load_config(path: str | Path = "configs/default.yaml") -> SimpleNamespace:
     with open(path) as f:
         return _to_ns(yaml.safe_load(f))
+
+
+def set_overrides(cfg, overrides: dict):
+    """Change settings by dotted name, e.g. {"loss.w_spacing": 1.0}. Used for named experiments."""
+    for key, value in overrides.items():
+        *path, last = key.split(".")
+        node = cfg
+        for part in path:
+            node = getattr(node, part)
+        if not hasattr(node, last):
+            raise KeyError(f"unknown setting: {key}")
+        setattr(node, last, value)
+    return cfg

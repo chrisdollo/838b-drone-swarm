@@ -86,26 +86,6 @@ def save_gif(traj, Q, path, every: int = 2, fps: int = 20, hold_s: float = 1.0, 
                          every=every, fps=fps, hold_s=hold_s, panel=4.0)
 
 
-def plot_final_grid(finals, Qs, titles=None, cols: int = 4, path=None, panel: float = 2.6):
-    """Static grid of final positions vs targets. Returns the figure."""
-    S = len(finals)
-    cols = min(cols, S)
-    rows = -(-S // cols)
-    fig, axs = plt.subplots(rows, cols, figsize=(panel * cols, panel * rows), dpi=100, squeeze=False)
-    for i, ax in enumerate(axs.flat):
-        if i >= S:
-            ax.axis("off")
-            continue
-        _setup(ax, Qs[i], titles[i] if titles else "")
-        P = _np(finals[i])[..., :2]
-        ax.scatter(P[:, 0], P[:, 1], s=14, color=AGENT, zorder=3)
-    fig.tight_layout()
-    if path:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(path)
-    return fig
-
-
 def plot_training(history, path=None):
     """Phase 2 training curves. Returns the figure.
 

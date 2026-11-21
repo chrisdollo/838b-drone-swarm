@@ -26,7 +26,9 @@ from swarm.shapes import sample_polyline
 
 EXTENT = 0.8                   # larger side of a shape at full size (box is [-0.5, 0.5])
 D_MIN_FRAC = 0.4               # collision distance = 0.4 x drone spacing
-GAP_ARC, GAP_MIN = 3.0, 1.0    # feature-size rule, in drone spacings (1.0: readable, not just drawable)
+GAP_ARC, GAP_MIN = 6.0, 1.0    # feature-size rule, in drone spacings (1.0: readable, not just drawable).
+                               # 6 along-the-shape spacings ignores corners down to ~20 deg (the layout
+                               # handles those) but still catches parallel strokes, close letters, spiral turns.
 
 # (drones N, goals M)
 GRID = [(8, 8), (8, 16), (8, 32), (8, 64),

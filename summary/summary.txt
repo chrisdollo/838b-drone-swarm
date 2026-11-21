@@ -1,0 +1,228 @@
+PROJECT SUMMARY (technical)
+Decentralized Swarm Shape Formation via Differentiable Simulation
+State as of Nov 20, 2026. Details: docs/phases_explained.txt and the walkthroughs in docs/walkthrough/.
+
+Idea: every drone runs the same small neural network on what it sees. The network
+is trained by backpropagating a formation loss through a differentiable physics
+simulator (PyTorch), not by reinforcement learning or hand-written rules.
+
+
+==============================================================================
+PHASE 1. DIFFERENTIABLE SIMULATOR + TOY OPTIMIZATION
+==============================================================================
+
+Goal
+  Prove that a loss on the drones' FINAL positions can be backpropagated through
+  100 physics steps to the accelerations that produced them, before any network.
+
+Simulator (swarm/sim.py)
+  Point-mass drones, state [B, N, 2] (batch, drones, xy), semi-implicit Euler:
+    v_{t+1} = (1 - c*dt) v_t + dt * a_t        p_{t+1} = p_t + dt * v_{t+1}
+  dt = 0.05 s, T = 100 steps (5 s), damping c = 0.5 (lambda = 1 - c*dt = 0.975),
+  a_max = 2. PyTorch ops only, no in-place ops, so autograd sees every step.
+  Unrolled: p_T = p_0 + sum_s w_s a_s with w_s = (dt/c)(1 - lambda^(T-s)), so the
+  gradient w.r.t. an early action is ~37x that of the last one; damping caps it.
+
+What is optimized: r, not a
+  The parameters are raw numbers r [1, T, N, 2] (6,400 for 32 drones) and
+      a = a_max * tanh(r)
+  - Every r maps to exactly one a in (-2, 2): optimizing r IS optimizing a,
+    but no value of r can break the motor limit.
+  - Clipping a instead would give zero gradient past the limit (stuck actions);
+    tanh always has a nonzero slope.
+  - Phase 2 puts the same a_max * tanh(.) on the network's output, so Phase 1
+    already tests that exact path.
+
+Loss: Chamfer distance (swarm/losses.py)
+  L = mean_i min_j |p_i - q_j|^2  +  mean_j min_i |p_i - q_j|^2
+      (every drone near some goal)  (every goal near some drone)
+  No drone is assigned a goal. Both terms are needed: the first alone lets all
+  drones pile on one point. Squared distances are computed directly (not cdist,
+  whose sqrt has an infinite slope at 0).
+
+Toy optimization (swarm/plan.py: optimize_plan)
+  32 drones, random starts, 64 goal points, Adam lr 0.05, 300 iterations,
+  cosine learning-rate decay.
+    circle: loss 0.0327 -> 0.00065 (best possible ~0.00058 = 3/8 s^2)
+    square: 0.0312 -> 0.00109 (earlier script run; the notebook now runs the circle)
+  Lessons:
+  - A constant lr diverges near the optimum (0.00062 -> 0.027): Adam moves every
+    parameter by ~lr however small its gradient. Cosine decay fixes it.
+  - The best loss is not 0: with 2 goals per drone, each drone's best spot is a
+    quarter of the way between two goals.
+  - A fixed plan only works for its own scene: replayed from 15 new starts it
+    scores 0.162 (worse than not moving, 0.033). Hence Phase 2.
+
+GIFs and figures (Phase 1)
+  results/gifs/phase1_circle.gif    the optimized plan replayed: 32 drones from
+                                    random starts onto the circle, 100 steps
+  results/figures/phase1_loss.png   loss per iteration vs the best possible
+  results/figures/phase1_lr.png     constant lr 0.05 / 0.01 vs cosine decay
+
+Notebook: notebooks/phase1.ipynb (~1 min)
+  1 setup and config
+  2 gradient check: measured |grad| per step matches w_s (ratio 36.8)
+  3 target shapes (circle, square, line, star)
+  4 Chamfer worked example (2 drones, 4 goals: L = 0.01 + 0.25)
+  5 toy optimization -> GIF + loss curve
+  6 learning-rate comparison
+  7 fixed plan on new starts / another shape / missing drones
+
+
+==============================================================================
+PHASE 2. SHARED DECENTRALIZED POLICY
+==============================================================================
+
+Goal
+  One network, copied onto every drone, maps what that drone sees to an
+  acceleration. Centralized training (whole swarm, one loss, offline),
+  decentralized execution (each drone uses only its own observation).
+
+Network (swarm/observations.py, swarm/policy.py)
+  Input, 39 numbers per drone, all relative to the drone:
+    6 nearest drones          p_j - p_i                 12
+    8 nearest goals           q_l - p_i                 16
+    "is each goal taken?"     distance from that goal to the nearest OTHER drone   8
+    collision distance d_min  (mission parameter)        1
+    own velocity              v_i                        2
+  Same size for any N; unchanged if the scene shifts; no drone identities.
+  Which neighbors/goals are nearest is chosen without gradient; the offsets
+  and distances themselves are differentiable.
+  MLP 39 -> 64 -> 64 -> 2, SiLU (smooth), a = a_max * tanh(output);
+  6,850 weights shared by every drone. Distances x10 before the first layer;
+  output layer initialized tiny (untrained swarm barely moves).
+
+Training data (swarm/dataset.py), generated on the fly, no dataset on disk
+  - Grid of (drones N, goals M): 8:{8,16,32,64}, 16:{16,32,64}, 32:{32,64},
+    64:{64,128}. Each iteration picks one cell at random.
+  - Shapes = lists of strokes, randomly rotated, stretched, sized, shifted.
+      training families: circle, square, line, triangle, pentagon, random
+                         polygon, random polyline, 1-2 letters
+      held out (never trained on): star, heart, spiral, words
+                         (HI, UMD, LOVE, FIRE, MARRY ME)
+  - Feature-size rule: parts far apart along the shape must be at least one
+    drone spacing s = outline length / N apart in space, else the shape is
+    redrawn (the swarm could not draw it). The trained models used a 3s
+    along-the-shape threshold; it is now 6s, for the new text layout.
+  - Collision distance per scene: d_min = 0.4 s.
+  - Start positions uniform in the box [-0.5, 0.5]^2, at rest.
+  - Fixed benchmark (data/benchmark/, 468 scenes): per cell 32 scenes of
+    training families + up to 16 of held-out families, each with its PER-SCENE
+    OPTIMUM (Phase 1 method on that scene, same collision penalty).
+
+How training works (swarm/train.py)
+  each iteration:
+    1. pick a grid cell, draw 32 scenes (batch)
+    2. closed loop for T steps: observe -> policy -> sim.step
+       (curriculum: T = 40 from it 0, 70 from it 500, 100 from it 1000)
+    3. loss (below), averaged over the 32 scenes
+    4. loss.backward() through every step and every policy call (BPTT)
+    5. clip gradient norm to 1, Adam step, cosine lr step
+  every 250 iterations: score the benchmark (training families), keep the best
+
+Loss (swarm/losses.py: total_loss), per scene, s = drone spacing:
+  L = [ shape + 10 * collision (+ 1.0 * spacing) ] / s^2  +  0.01 * effort
+  - shape: Chamfer averaged over the last 20% of steps (arrive AND stay)
+  - collision: sum over pairs closer than d_min of (d_min - distance)^2, all steps
+  - spacing (optional, the "spacing" experiment): same form with radius 0.8 s,
+    last 20% of steps (PU-Net-style repulsion: pushes toward even spacing)
+  - effort: mean |a|^2
+  - divided by s^2 because those terms scale with s^2: otherwise sparse
+    8-drone scenes would weigh ~30x more than dense 64-drone ones
+
+Optimizer and settings (configs/default.yaml)
+  Adam, lr 0.003 -> 0.0003 cosine over 3,000 iterations (Phase 1 lesson),
+  batch 32, gradient-norm clip 1.0, truncated BPTT off.
+  Note: with the s^2 normalization, gradient norms are 1-1000, so clipping is
+  active almost every step (normalized gradient descent in practice).
+
+Early stopping
+  Yes: stop when the benchmark score has not improved by >= 1% for 4 checks
+  (1,000 iterations). It did not trigger in either run (both still improving
+  after iteration 2,250). The best checkpoint is always kept.
+
+Score
+  ratio = (Chamfer + eps) / (per-scene optimum + eps), eps = 0.01 s^2,
+  geometric mean over scenes. 1x = as good as optimizing that scene directly.
+  Also: close pairs (< d_min) and unevenness (std/mean of nearest-neighbor
+  distance, 0 = perfectly even).
+
+Results (3,000 iterations, 16 min each on a laptop CPU)
+                              baseline     spacing     per-scene optimum
+  ratio, training families    2.23x        2.19x       1x
+  ratio, held-out families    2.25x        2.34x       1x
+  close pairs per scene       6.1          3.2         2.2
+  unevenness                  0.433        0.307       0.340
+  drones crowding (<0.4 s)    20.6%        9.9%        13.9%
+  - Strong with >= 2 goals per drone (1.3-2.4x); weak with 1 goal per drone
+    (3-6.5x, even the optimum ends with two drones sharing a goal).
+  - Held-out shapes cost (almost) nothing: generalization works.
+  - New starts on a circle: Phase 1 fixed plan 0.167 vs policy 0.00049.
+  - Spacing term: half the crowding, more even than the optimum, same training
+    error; slightly worse on held-out shapes and on MARRY ME (64 drones).
+  - Score plateaus after ~1,250 iterations: more training won't help.
+  Models: results/models/phase2_baseline.pt, phase2_spacing.pt
+
+GIFs and figures (Phase 2)
+  All GIFs are INFERENCE: frozen weights, every drone runs the policy on its
+  own view each step, same simulator, no learning. Scenes are benchmark scenes
+  (never trained on) or held-out shapes.
+  results/gifs/phase2_<exp>_cells.gif       6 benchmark scenes across the grid
+                                            (8 to 64 drones), 100 steps
+  results/gifs/phase2_<exp>_heldout.gif     star, heart, spiral, a word and
+                                            MARRY ME (64 drones), 150 steps
+  results/gifs/phase2_compare_heldout.gif   heart / spiral / MARRY ME:
+                                            baseline (top) vs spacing (bottom)
+  results/gifs/phase2_compare_cells.gif     letters / square / pentagon, same layout
+  results/figures/phase2_benchmark.png      every cell x family with its optimum
+  results/figures/phase2_<exp>_training.png benchmark ratio, penalties, gradient norm
+  results/figures/phase2_<exp>_ratio_grid.png    ratio per cell, train vs held-out
+  results/figures/phase2_<exp>_policy_overview.png  policy on every cell x family
+  results/figures/phase2_compare_cells.png       ratio / close pairs / unevenness per cell
+  results/figures/phase2_compare_spacing.png     nearest-neighbor distance histograms
+  results/figures/phase2_compare_training.png    validation curves of both runs
+  results/phase2_compare.json                    all comparison numbers
+  (<exp> = baseline or spacing)
+
+Notebooks
+  notebooks/phase2.ipynb (~20 min), one named experiment per run
+  (EXPERIMENT = "baseline" or "spacing"):
+    1 setup (experiment settings, TRAIN / REBUILD_BENCHMARK switches)
+    2 data: build or load the benchmark, overview figure
+    3 what one drone sees (neighbors, goals, occupancy)
+    4 training with live curves; best model -> results/models/
+    5 ratio for every cell, training vs held-out shapes
+    6 every cell and shape (figure + GIF)
+    7 held-out shapes incl. MARRY ME (GIF)
+    8 policy vs the Phase 1 fixed plan on new starts
+  notebooks/phase2_compare.ipynb (~3 min), finished runs side by side:
+    1 setup  2 training length/curves  3 benchmark per cell (3 measures)
+    4 nearest-neighbor spacing  5 side-by-side GIFs  6 summary (JSON)
+
+Version history
+  v1 (32 drones / 64 goals only, fixed d_min 0.02, no occupancy input)
+  clumped and failed on text -> v2 added the grid, the occupancy input, d_min
+  scaled to spacing, the feature-size rule, the benchmark and its optimum, and
+  the s^2 normalization.
+
+
+==============================================================================
+TEXT-TO-GOALS GENERATOR (built, not yet used in training)
+==============================================================================
+
+swarm/layout.py: text_goals("MARRY\nME", n=128) or text_goals(..., pitch=0.025)
+  - Hershey Simplex single-stroke font (uppercase); fonts are swappable.
+  - A goal at every stroke end, corner (turn > 35 deg) and junction; anchors
+    closer than half a spacing merged (one goal per junction).
+  - Remaining goals fill the widest gaps one by one -> even spacing, longer
+    letters get more goals; inside sharp V's dots closer than 0.6 spacing are
+    moved elsewhere. One goal per drone (M = N).
+  - Either the drone count follows from the spacing, or the spacing from the
+    drone count; info["readable"] says whether there are enough drones.
+  - Readable from: HI 10, UMD 26, LOVE 40, SWARM 72, MARRY ME 92,
+    WILL YOU MARRY ME 156 drones.
+  Review sheet: results/figures/layout_text_examples.png
+
+Decided next: every shape family on this layout with drones = goals, a random
+drone count 8-96 per batch, rebuilt benchmark with "slots filled" and "slot
+error" scores, then retrain. Self-healing is set aside for now.

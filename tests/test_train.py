@@ -49,3 +49,19 @@ def test_plan_reaches_circle():
     torch.manual_seed(0)
     out = optimize_plan(torch.rand(1, 8, 2) - 0.5, sample_shape("circle", 16)[None], cfg, iters=150)
     assert out["history"][-1] < 0.2 * out["history"][0]
+
+
+def test_spacing_loss_and_uniformity():
+    from swarm.losses import spacing_cv, spacing_loss
+    even = torch.tensor([[[0.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.3, 0.0]]])          # spacing 0.1
+    clumped = torch.tensor([[[0.0, 0.0], [0.02, 0.0], [0.2, 0.0], [0.3, 0.0]]])        # gaps 0.02, 0.18, 0.1
+    as_traj = lambda P: P[:, None].expand(1, 5, 4, 2)
+    assert spacing_loss(as_traj(even), 0.08).item() == 0                                # nobody closer than 0.08
+    assert spacing_loss(as_traj(clumped), 0.08).item() > 0
+    assert spacing_cv(even).item() < 1e-6 < spacing_cv(clumped).item()
+
+
+def test_overrides():
+    from swarm.config import set_overrides
+    cfg = set_overrides(load_config(), {"loss.w_spacing": 2.0})
+    assert cfg.loss.w_spacing == 2.0

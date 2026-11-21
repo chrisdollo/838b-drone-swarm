@@ -24,6 +24,8 @@ loss:                # shape and collision are divided by each scene's spacing^2
   hold_frac: 0.2     # shape loss averaged over the last 20% of steps
   w_collision: 10.0  # soft penalty for pairs closer than the scene's d_min
   w_effort: 0.01     # penalty on mean ||a||^2
+  w_spacing: 0.0     # repulsion between drones closer than spacing_frac x s, last 20% of steps (0 = off)
+  spacing_frac: 0.8  # repulsion radius as a fraction of the ideal drone spacing s
 
 train:
   batch_size: 32     # scenes per iteration, all from one randomly chosen grid cell
@@ -37,3 +39,5 @@ train:
     - [500, 70]
     - [1000, 100]
   val_every: 250     # score the benchmark (train shapes) against its per-scene optimum
+  patience: 4        # early stopping: stop after 4 checks (1,000 iterations) without improvement
+  min_delta: 0.01    # an "improvement" must lower the benchmark ratio by at least 1%
