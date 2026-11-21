@@ -1,0 +1,160 @@
+{
+ "chamfer": {
+  "train": {
+   "filled": 0.44982994879995075,
+   "slot_error": 2.1827548827443803,
+   "steps_to_form": 66.25,
+   "formed": 0.12244898134044238,
+   "shared_goals": 0.17554208849157607,
+   "close_pairs": 10.525510047163282
+  },
+  "heldout": {
+   "filled": 0.5606398837906974,
+   "slot_error": 1.2089671279702867,
+   "steps_to_form": 48.666666666666664,
+   "formed": 0.26785714285714285,
+   "shared_goals": 0.18247767857142858,
+   "close_pairs": 9.35714306150164
+  },
+  "final_speed": 0.026241857558488846,
+  "goal_switches": 0.1584821492433548
+ },
+ "matching": {
+  "train": {
+   "filled": 0.1977040788957051,
+   "slot_error": 1.129807438169207,
+   "steps_to_form": NaN,
+   "formed": 0.0,
+   "shared_goals": 0.28499680757522583,
+   "close_pairs": 27.03061240059989
+  },
+  "heldout": {
+   "filled": 0.18905009755066463,
+   "slot_error": 0.9850173251969474,
+   "steps_to_form": NaN,
+   "formed": 0.0,
+   "shared_goals": 0.2815600165299007,
+   "close_pairs": 28.410714285714285
+  },
+  "final_speed": 0.1450139284133911,
+  "goal_switches": 2.2056493759155273
+ },
+ "sinkhorn": {
+  "train": {
+   "filled": 0.1721673043710845,
+   "slot_error": 1.3495045815195357,
+   "steps_to_form": NaN,
+   "formed": 0.0,
+   "shared_goals": 0.27758290086473736,
+   "close_pairs": 36.0306122643607
+  },
+  "heldout": {
+   "filled": 0.19587053784302302,
+   "slot_error": 1.0202785560062952,
+   "steps_to_form": NaN,
+   "formed": 0.0,
+   "shared_goals": 0.2671750954219273,
+   "close_pairs": 35.37499959128244
+  },
+  "final_speed": 0.1350266933441162,
+  "goal_switches": 2.4017856121063232
+ },
+ "energy": {
+  "train": {
+   "filled": 0.25531462899276186,
+   "slot_error": 1.1127700124468123,
+   "steps_to_form": 95.5,
+   "formed": 0.015306123133216585,
+   "shared_goals": 0.26559843122959137,
+   "close_pairs": 13.193877628871373
+  },
+  "heldout": {
+   "filled": 0.2782118022441864,
+   "slot_error": 0.8163630025727409,
+   "steps_to_form": 96.0,
+   "formed": 0.10714285714285714,
+   "shared_goals": 0.25285218230315615,
+   "close_pairs": 11.02976199558803
+  },
+  "final_speed": 0.10573219507932663,
+  "goal_switches": 1.1686596870422363
+ },
+ "laplacian": {
+  "train": {
+   "filled": 0.2981770762375423,
+   "slot_error": 0.9540472456387111,
+   "steps_to_form": 96.0,
+   "formed": 0.03571428677865437,
+   "shared_goals": 0.2744472793170384,
+   "close_pairs": 9.704081637518746
+  },
+  "heldout": {
+   "filled": 0.33320932728903635,
+   "slot_error": 0.7410480890955243,
+   "steps_to_form": 96.5,
+   "formed": 0.05357142857142857,
+   "shared_goals": 0.2718874045780727,
+   "close_pairs": 10.130952290126256
+  },
+  "final_speed": 0.17319190502166748,
+  "goal_switches": 2.1664011478424072
+ },
+ "energy_stable": {
+  "train": {
+   "filled": 0.6878985975469861,
+   "slot_error": 0.6111657960074288,
+   "steps_to_form": 56.285714285714285,
+   "formed": 0.6071428598037788,
+   "shared_goals": 0.08506058582237788,
+   "close_pairs": 1.3928571279559816
+  },
+  "heldout": {
+   "filled": 0.7398313752242497,
+   "slot_error": 0.5139593247856412,
+   "steps_to_form": 36.0,
+   "formed": 0.6309523859194347,
+   "shared_goals": 0.08153521908181054,
+   "close_pairs": 1.5297619189534868
+  },
+  "final_speed": 0.0426451712846756,
+  "goal_switches": 0.33851510286331177
+ },
+ "energy_stable_all": {
+  "train": {
+   "filled": 0.5750159408364978,
+   "slot_error": 0.8383242189884186,
+   "steps_to_form": 27.2,
+   "formed": 0.45408163006816593,
+   "shared_goals": 0.10278486300792013,
+   "close_pairs": 0.4693877622485161
+  },
+  "heldout": {
+   "filled": 0.6344246183122907,
+   "slot_error": 0.6243941613606044,
+   "steps_to_form": 28.6,
+   "formed": 0.5654761918953487,
+   "shared_goals": 0.09629216151578086,
+   "close_pairs": 0.5357142857142857
+  },
+  "final_speed": 0.030292097479104996,
+  "goal_switches": 0.1888817995786667
+ },
+ "optimum": {
+  "train": {
+   "filled": 0.9999202830450875,
+   "slot_error": 0.018784654293475405,
+   "steps_to_form": 71.71428571428571,
+   "formed": 1.0,
+   "shared_goals": 0.0,
+   "close_pairs": 0.0
+  },
+  "heldout": {
+   "filled": 1.0,
+   "slot_error": 0.009648894591789161,
+   "steps_to_form": 63.0,
+   "formed": 1.0,
+   "shared_goals": 0.0,
+   "close_pairs": 0.0
+  }
+ }
+}

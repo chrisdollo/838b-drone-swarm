@@ -122,12 +122,15 @@ def total_loss(traj, accs, Q, d_min, lcfg, d_min_frac: float = 0.4):
     Shape, collision and spacing are divided by each scene's squared drone
     spacing s^2 = (d_min / d_min_frac)^2. All scale with s^2, so without this
     the sparse 8-drone scenes would outweigh the dense 64-drone ones ~30x.
+    The shape term is lcfg.shape (default "chamfer"; see swarm/formation_losses.py).
     The spacing term is on only if lcfg.w_spacing > 0 (radius = spacing_frac * s).
     Returns (loss tensor, dict of each term as a float for logging).
     """
     s = d_min / d_min_frac
     s2 = s ** 2
-    shape = (shape_loss(traj, Q, lcfg.hold_frac, per_scene=True) / s2).mean()
+    from swarm.formation_losses import formation_loss
+    shape = getattr(lcfg, "w_shape", 1.0) * formation_loss(getattr(lcfg, "shape", "chamfer"), traj, Q, s,
+                                                           lcfg.hold_frac, lcfg).mean()
     coll = (collision_loss(traj, d_min, per_scene=True) / s2).mean()
     effort = effort_loss(accs)
     loss = shape + lcfg.w_collision * coll + lcfg.w_effort * effort

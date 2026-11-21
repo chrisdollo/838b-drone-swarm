@@ -687,3 +687,52 @@ limiting factor.
      arrive just in time. Phase 1 text plans now score every step
      (hold_frac=1.0). The policy scores the last 20% of steps; the benchmark
      optimum still uses the last frame (kept for comparability).
+
+
+==============================================================================
+PHASE 2: LOSS STUDY
+==============================================================================
+
+Same policy, data, benchmark scenes and training for every run; only the
+formation loss changes (swarm/formation_losses.py, swarm/experiments.py,
+notebooks/phase2_losses.ipynb; per-scene version: notebooks/phase1_losses.ipynb).
+Model selection: slots filled. Training shapes: circle, square, line,
+triangle, pentagon, random polygon, random polyline; held out: star, heart,
+spiral. Reference "optimum" = centralized: Hungarian assignment once from the
+start positions, then an optimized plan (100% filled).
+
+  Benchmark, mean over N   filled (train / held-out)  formed  shared  close  switches
+  chamfer                       45% / 56%               12%     18%    10.5    0.16
+  matching                      20% / 19%                0%     28%    27.0    2.21
+  sinkhorn                      17% / 20%                0%     28%    36.0    2.40
+  energy                        26% / 28%                2%     27%    13.2    1.17
+  laplacian                     30% / 33%                4%     27%     9.7    2.17
+  energy_stable                 69% / 74%               61%      9%     1.4    0.34
+  energy_stable_all             58% / 63%               45%     10%     0.5    0.19
+  optimum (centralized)        100% / 100%             100%      0%     0.0
+
+  formed = share of scenes whose slot error stays < 0.5 spacings to the end
+  (median step: energy_stable 56 / held-out 36, energy_stable_all 27 / 29);
+  switches = changes of a drone's nearest slot in the last 20 steps.
+
+  energy_stable = energy distance, Huber-like (|x| -> sqrt(|x|^2 + (0.2 s)^2)),
+  weight 10, truncated BPTT every 25 steps, shape scored over the last 20%.
+  energy_stable_all = the same, shape scored at every step.
+
+  Filled by swarm size (energy_stable vs chamfer), training / held-out shapes:
+    N=8   94% / 94%   vs 54% / 81%       N=48  51% / 65%   vs 37% / 49%
+    N=16  92% / 95%   vs 53% / 65%       N=64  49% / 58%   vs 39% / 46%
+    N=24  85% / 86%   vs 55% / 58%       N=96  38% / 45%   vs 31% / 42%
+    N=32  73% / 75%   vs 46% / 51%
+
+Findings
+  - The fix was training stability, not the choice of loss alone: plain
+    energy collapsed (26%), stabilized energy is the best policy so far (69%
+    / 74%), with 7x fewer close pairs than chamfer and goal switching close
+    to chamfer's (0.34 vs 0.16; the unstable losses switch 1.2-2.4 times).
+  - Scoring every step (energy_stable_all) forms about twice as fast (median
+    step 27 vs 56) and collides least (0.5), but fills fewer slots (58%).
+  - Held-out shapes score as well as or better than training shapes.
+  - Still open: large swarms (38-49% at 64-96 drones vs 92-94% at 8-16).
+    Next candidates: the same stabilizers for chamfer/sinkhorn (fair
+    comparison), a longer schedule, a richer observation for big swarms.

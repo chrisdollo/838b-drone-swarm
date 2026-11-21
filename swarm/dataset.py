@@ -45,6 +45,9 @@ BENCH_DIR = "data/benchmark_v3"
 TRAIN_FAMILIES = ["circle", "square", "line", "triangle", "pentagon", "random_polygon", "random_polyline",
                   "letters", "random_string"]
 HELDOUT_FAMILIES = ["star", "heart", "spiral", "word", "heldout_string"]
+# Loss study: geometric shapes only, no text
+SHAPE_TRAIN = ["circle", "square", "line", "triangle", "pentagon", "random_polygon", "random_polyline"]
+SHAPE_HELDOUT = ["star", "heart", "spiral"]
 
 ALPHABET = string.ascii_uppercase + string.digits
 # Held-out words. Fewest drones that keep them readable: HI 10, UMD 26, FIRE 38, LOVE 39, MARRY ME 92.
@@ -364,5 +367,22 @@ def build_benchmark(cfg, out_dir=BENCH_DIR, per_family: int = 4, seed: int = BEN
     return index
 
 
-def load_cell(n: int, split: str = "train", root=BENCH_DIR) -> dict:
-    return torch.load(Path(root) / f"n{n}_{split}.pt", weights_only=False)
+def load_cell(n: int, split: str = "train", root=BENCH_DIR, families=None) -> dict:
+    """One benchmark cell; families: keep only scenes of these families (e.g. SHAPE_TRAIN)."""
+    cell = torch.load(Path(root) / f"n{n}_{split}.pt", weights_only=False)
+    return cell if families is None else subset(cell, families)
+
+
+def subset(cell: dict, families) -> dict:
+    """The scenes of a cell whose family is in `families` (same seeds, same starts)."""
+    keep = [i for i, f in enumerate(cell["family"]) if f in families]
+    idx = torch.tensor(keep, dtype=torch.long)
+    out = {}
+    for k, v in cell.items():
+        if torch.is_tensor(v) and v.dim() > 0 and v.shape[0] == len(cell["family"]):
+            out[k] = v[idx]
+        elif isinstance(v, list) and len(v) == len(cell["family"]):
+            out[k] = [v[i] for i in keep]
+        else:
+            out[k] = v
+    return out

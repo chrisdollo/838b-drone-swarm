@@ -40,13 +40,19 @@ def rollout(pos0: torch.Tensor, vel0: torch.Tensor, accs: torch.Tensor,
 
 
 def rollout_closed_loop(pos0: torch.Tensor, vel0: torch.Tensor, Q: torch.Tensor, d_min, controller,
-                        cfg, steps: int | None = None, tbptt: int = 0, return_state: bool = False):
+                        cfg, steps: int | None = None, tbptt: int = 0, grad_decay: float = 0.0,
+                        return_state: bool = False):
     """Run T steps where the actions come from a controller that looks at the current state.
 
     controller(pos, vel, Q, d_min) -> acc [B, N, dim]; d_min [B] is each scene's
     collision distance. The trained policy, and later the Phase 3 baselines,
     all use this one signature.
     tbptt: if K > 0, cut the gradient chain every K steps (truncated BPTT).
+    grad_decay: if 0 < a < 1, temporal gradient decay (Zhang et al. 2024, "Back
+    to Newton's Laws"): the state carried to the next step is
+    a * x + (1 - a) * x.detach(), same value, but the gradient flowing back
+    through it shrinks by a per step. Losses k steps later reach an action
+    with weight a^k: no hard cut, and the product of step Jacobians can't explode.
     Returns traj [B, T+1, N, dim] and accs [B, T, N, dim]; with return_state,
     also the final velocity, so a run can be continued (e.g. after removing agents).
     """
@@ -56,6 +62,9 @@ def rollout_closed_loop(pos0: torch.Tensor, vel0: torch.Tensor, Q: torch.Tensor,
     for t in range(steps):
         if tbptt and t > 0 and t % tbptt == 0:
             pos, vel = pos.detach(), vel.detach()
+        if grad_decay and t > 0:
+            pos = grad_decay * pos + (1 - grad_decay) * pos.detach()
+            vel = grad_decay * vel + (1 - grad_decay) * vel.detach()
         acc = controller(pos, vel, Q, d_min)
         pos, vel = step(pos, vel, acc, cfg.dt, cfg.damping)
         traj.append(pos)

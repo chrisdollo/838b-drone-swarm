@@ -21,7 +21,16 @@ policy:
   pos_scale: 10.0    # distances (~0.01-1) are multiplied by this before the MLP
 
 loss:                # shape and collision are divided by each scene's spacing^2
-  hold_frac: 0.2     # shape loss averaged over the last 20% of steps
+  shape: chamfer     # formation loss: chamfer | matching | sinkhorn | energy | laplacian | dcd (swarm/formation_losses.py)
+  w_shape: 1.0       # weight of the formation loss
+  time_weighting: last  # when the shape is scored: final | last | every | terminal | discount (swarm/formation_losses.py)
+  hold_frac: 0.2     # "last": shape loss averaged over the last 20% of steps
+  time_gamma: 0.95   # "discount": weight of step t proportional to time_gamma^(T - t)
+  huber: 0.0         # Huber form for squared-distance losses, in drone spacings (0 = plain squared)
+  sinkhorn_blur: 0.25  # sinkhorn: entropic blur, in drone spacings (0 -> exact matching)
+  dcd_scale: 2.0     # dcd: exp(-d / (dcd_scale * s))
+  energy_delta: 0.0  # energy: Huber-like smoothing radius in drone spacings (0 = plain |x|)
+  w_laplacian: 1.0   # laplacian: weight of the Laplacian shape error (added to matching)
   w_collision: 10.0  # soft penalty for pairs closer than the scene's d_min
   w_effort: 0.01     # penalty on mean ||a||^2
   w_spacing: 0.0     # repulsion between drones closer than spacing_frac x s, last 20% of steps (0 = off)
@@ -34,10 +43,12 @@ train:
   lr_min: 0.0003
   grad_clip: 1.0     # max gradient norm
   tbptt: 0           # truncate backprop every K steps; 0 = full BPTT
+  grad_decay: 0.0    # temporal gradient decay per step (e.g. 0.92, Zhang et al. 2024); 0 = off
   curriculum:        # [from iteration, rollout length T]: short rollouts first
     - [0, 40]
     - [500, 70]
     - [1000, 100]
   val_every: 250     # score the benchmark (train shapes) against its per-scene optimum
   patience: 4        # early stopping: stop after 4 checks (1,000 iterations) without improvement
-  min_delta: 0.01    # an "improvement" must lower the benchmark ratio by at least 1%
+  min_delta: 0.01    # an "improvement" must lower the validation score by at least 1%
+  select: filled     # model selection / early stopping: filled (1 - slots filled) | slot_error

@@ -46,8 +46,10 @@ def evaluate_cell(policy, cell: dict, cfg, steps: int | None = None, form: bool 
     form=True also computes the slot error at every step and steps_to_form (slower).
     """
     controller = policy.act if hasattr(policy, "act") else policy
-    p0, Q, d_min = cell["start"], cell["goals"], cell["d_min"]
+    dev = next(policy.parameters()).device if hasattr(policy, "parameters") else cell["start"].device
+    p0, Q, d_min = (cell[k].to(dev) for k in ("start", "goals", "d_min"))
     traj, _ = rollout_closed_loop(p0, torch.zeros_like(p0), Q, d_min, controller, cfg, steps=steps)
+    traj, p0, Q, d_min = traj.cpu(), p0.cpu(), Q.cpu(), d_min.cpu()         # scoring on the CPU
     final = traj[:, -1]
     ch = chamfer(final, Q, per_scene=True)
     eps = 0.01 * (d_min / D_MIN_FRAC) ** 2
@@ -67,11 +69,16 @@ def _nanmedian(x):
     return float(x.median()) if len(x) else float("nan")
 
 
-def evaluate_benchmark(policy, cfg, split: str = "train", ns=BENCH_N, root=BENCH_DIR, form: bool = False) -> list[dict]:
-    """Score a controller on every cell of the benchmark. One summary row per cell (means over its scenes)."""
+def evaluate_benchmark(policy, cfg, split: str = "train", ns=BENCH_N, root=BENCH_DIR, form: bool = False,
+                       families=None) -> list[dict]:
+    """Score a controller on every cell of the benchmark. One summary row per cell (means over its scenes).
+
+    families: score only scenes of these families (e.g. dataset.SHAPE_TRAIN)."""
     rows = []
     for n in ns:
-        cell = load_cell(n, split, root)
+        cell = load_cell(n, split, root, families)
+        if not cell["family"]:
+            continue
         r = evaluate_cell(policy, cell, cfg, form=form)
         row = {"n": n, "scenes": len(cell["family"]),
                "slot_error": float(r["slot_error"].mean()), "filled": float(r["filled"].mean()),
@@ -100,19 +107,27 @@ def overall_ratio(rows) -> float:
     return overall(rows, "ratio")
 
 
-def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: SharedMLP | None = None):
+def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: SharedMLP | None = None,
+          families=None):
     """Train a policy on the whole drones x goals grid. Returns (policy, history).
 
     run_dir: where to save best.pt, last.pt and history.json (None: don't save).
     callback(history): called every callback_every iterations (live plots in the notebook).
-    Validation score = mean slot error over the benchmark cells (training shapes).
+    families: training shape families (default dataset.TRAIN_FAMILIES); the
+    benchmark validation uses the same families.
+    Validation score = cfg.train.select over the benchmark cells (training
+    shapes): "slot_error" (mean, lower is better) or "filled" (scored as
+    1 - slots filled).
     Early stopping: stop when it has not improved by at least train.min_delta
     (relative) for train.patience validations in a row.
     """
     tc = cfg.train
+    families = families or TRAIN_FAMILIES
+    select = getattr(tc, "select", "slot_error")
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
-    policy = policy or policy_from_config(cfg)
+    device = torch.device(getattr(cfg, "device", "cpu"))
+    policy = (policy or policy_from_config(cfg)).to(device)
     opt = torch.optim.Adam(policy.parameters(), lr=tc.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=tc.iters, eta_min=tc.lr_min)
 
@@ -126,8 +141,9 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
     def validate(it):
         """Score the benchmark; save the best weights. Returns True if training should stop early."""
         nonlocal best, since_best
-        rows = evaluate_benchmark(policy, cfg, "train")
-        val = {"it": it, "score": overall(rows, "slot_error"), "slot_error": overall(rows, "slot_error"),
+        rows = evaluate_benchmark(policy, cfg, "train", families=families)
+        score = 1 - overall(rows, "filled") if select == "filled" else overall(rows, "slot_error")
+        val = {"it": it, "score": score, "slot_error": overall(rows, "slot_error"),
                "filled": overall(rows, "filled"), "ratio": overall_ratio(rows), "cells": rows,
                "close_pairs": overall(rows, "close_pairs"), "uniformity": overall(rows, "uniformity")}
         history["val"].append(val)
@@ -150,9 +166,10 @@ def train(cfg, run_dir=None, callback=None, callback_every: int = 50, policy: Sh
             break
         n = sample_n(rng, N_RANGE)
         T = rollout_length(it, tc.curriculum, cfg.steps)
-        pos0, vel0, Q, d_min = make_batch(tc.batch_size, n, rng, TRAIN_FAMILIES)
+        pos0, vel0, Q, d_min = make_batch(tc.batch_size, n, rng, families, device=device)
 
-        traj, accs = rollout_closed_loop(pos0, vel0, Q, d_min, policy.act, cfg, steps=T, tbptt=tc.tbptt)
+        traj, accs = rollout_closed_loop(pos0, vel0, Q, d_min, policy.act, cfg, steps=T, tbptt=tc.tbptt,
+                                           grad_decay=getattr(tc, "grad_decay", 0.0))
         loss, parts = total_loss(traj, accs, Q, d_min, cfg.loss)
 
         opt.zero_grad()

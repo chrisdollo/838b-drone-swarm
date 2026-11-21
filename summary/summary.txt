@@ -260,6 +260,141 @@ Problems
   4. Filling drops with swarm size (55% at 8 drones -> 33% at 96).
 
 
+==============================================================================
+LOSS STUDY (geometric shapes only, one slot per drone, 8-96 drones)
+==============================================================================
+
+Same policy, data, benchmark scenes and training for every run; only the
+formation loss changes (swarm/formation_losses.py, swarm/experiments.py,
+notebooks/phase2_losses.ipynb; per-scene version: notebooks/phase1_losses.ipynb).
+Model selection: slots filled. Training shapes: circle, square, line,
+triangle, pentagon, random polygon, random polyline; held out: star, heart,
+spiral. Reference "optimum" = centralized: Hungarian assignment once from the
+start positions, then an optimized plan (100% filled).
+
+  Benchmark, mean over N   filled (train / held-out)  formed  shared  close  switches
+  chamfer                       45% / 56%               12%     18%    10.5    0.16
+  matching                      20% / 19%                0%     28%    27.0    2.21
+  sinkhorn                      17% / 20%                0%     28%    36.0    2.40
+  energy                        26% / 28%                2%     27%    13.2    1.17
+  laplacian                     30% / 33%                4%     27%     9.7    2.17
+  energy_stable                 69% / 74%               61%      9%     1.4    0.34
+  energy_stable_all             58% / 63%               45%     10%     0.5    0.19
+  optimum (centralized)        100% / 100%             100%      0%     0.0
+
+  formed = share of scenes whose slot error stays < 0.5 spacings to the end
+  (median step: energy_stable 56 / held-out 36, energy_stable_all 27 / 29);
+  switches = changes of a drone's nearest slot in the last 20 steps.
+
+  energy_stable = energy distance, Huber-like (|x| -> sqrt(|x|^2 + (0.2 s)^2)),
+  weight 10, truncated BPTT every 25 steps, shape scored over the last 20%.
+  energy_stable_all = the same, shape scored at every step.
+
+  Filled by swarm size (energy_stable vs chamfer), training / held-out shapes:
+    N=8   94% / 94%   vs 54% / 81%       N=48  51% / 65%   vs 37% / 49%
+    N=16  92% / 95%   vs 53% / 65%       N=64  49% / 58%   vs 39% / 46%
+    N=24  85% / 86%   vs 55% / 58%       N=96  38% / 45%   vs 31% / 42%
+    N=32  73% / 75%   vs 46% / 51%
+
+Findings
+  - The fix was training stability, not the choice of loss alone: plain
+    energy collapsed (26%), stabilized energy is the best policy so far (69%
+    / 74%), with 7x fewer close pairs than chamfer and goal switching close
+    to chamfer's (0.34 vs 0.16; the unstable losses switch 1.2-2.4 times).
+  - Scoring every step (energy_stable_all) forms about twice as fast (median
+    step 27 vs 56) and collides least (0.5), but fills fewer slots (58%).
+  - Held-out shapes score as well as or better than training shapes.
+  - Still open: large swarms (38-49% at 64-96 drones vs 92-94% at 8-16).
+    Next candidates: the same stabilizers for chamfer/sinkhorn (fair
+    comparison), a longer schedule, a richer observation for big swarms.
+
+
+==============================================================================
+CHALLENGES (running list, for the reports)
+==============================================================================
+
+1. Too slow when only the final shape is scored.
+   Scoring the formation on the last frame only (Phase 1 plans, the per-scene
+   optimum) gives nothing for arriving early. The optimizer spread the motion
+   over all the time it had: peak speed 0.1-0.2 units/s (the physics allows
+   4), 90% of the way only at step ~95 of 100. Giving it 200 steps did not
+   help: the drones simply moved half as fast and again arrived at the end.
+
+2. Erratic when every step is scored.
+   Scoring the shape at every step (hold_frac = 1) made the drones move fast
+   (~1.6x) and reach the goals early, but they did not settle: they kept
+   moving instead of holding position and switched goals at the last second.
+   Cause: Chamfer has no assignment. Each drone is pulled toward whatever
+   goal is nearest at that step, and as drones move the "nearest" goal
+   changes, so a drone near two slots, or two drones near one slot, keep
+   trading targets until the end.
+   Response: the loss study below. The matching losses fix each drone's slot
+   (Hungarian on the final frame, held over the whole scoring window), so the
+   target cannot flip from step to step.
+
+3. Chamfer cannot express "one drone per slot" (v3).
+   With one slot per drone, Chamfer is happy with two drones on one slot and
+   an empty slot next to it. Training loss kept falling while slots filled
+   stayed at 29-42%; even the per-scene optimum filled only 72%.
+
+4. Choosing the metric that picks the model.
+   Mean slot error and slots filled disagree late in training (a few far-off
+   drones raise the mean while more slots fill). Early stopping on slot error
+   kept an early, worse checkpoint. Now selected on slots filled.
+
+5. Text needs more drones than expected, and empty corners hurt it most.
+   Readable from HI 10, UMD 26, LOVE 39, MARRY ME 92 drones; the policy
+   leaves corner and stroke-end slots empty more often than the rest, which
+   is exactly where letters are recognized. Text set aside while the loss is
+   fixed on geometric shapes.
+
+6. A good loss for planning is not automatically a trainable loss.
+   Loss study, per-scene optimizer (no network, notebooks/phase1_losses.ipynb,
+   5 shapes, 16-48 drones), slots filled:
+       chamfer 82%  matching 66%  sinkhorn 64%  energy 100%  laplacian 75%
+       assigned (centralized: Hungarian once, then plan) 100%
+   Energy distance (an MMD: drones and slots compared as distributions, with
+   drone-drone repulsion) matches the centralized reference without being
+   told which slot is whose. Density-aware Chamfer (Wu et al. 2021) failed:
+   its gradient vanishes for drones far from the shape and they drift off.
+   But training the POLICY with the same losses (geometric shapes, 8-96
+   drones) went the other way: chamfer 45% best, laplacian 30%, energy 26%,
+   matching 20%, sinkhorn 17%, and energy, laplacian and sinkhorn then
+   collapsed to 1-5%.
+
+7. Exploding gradients through 100 steps (the cause of the collapse).
+   Every collapse began when the curriculum switched rollouts from 70 to 100
+   steps. Gradient norms went from ~2-10 to 1e5-1e13 (energy, laplacian), and
+   effort (mean squared acceleration, max 8) rose to 4-7: the drones were
+   flooring it almost all the time. The matching-type losses pull every drone
+   hard toward one specific slot, so the policy learned a high-gain,
+   bang-bang controller. Backprop through time multiplies one step-to-step
+   factor per step; for a high-gain closed loop those factors are > 1 and the
+   product explodes over 100 steps. Clipping bounds the step size but the
+   direction becomes noise, and the policy is destroyed. Chamfer survived
+   (effort 0.4, gradient ~6) because its pull is weak and local.
+   Response: truncated BPTT (gradient cut every 25 steps) + a Huber-like
+   energy distance (|x| replaced by sqrt(|x|^2 + (0.2 s)^2): the plain |x|
+   has a kink at the slot, so the pull stays at full strength until the drone
+   is exactly there, which is what makes the control bang-bang). Radius 0.5 s
+   cost accuracy (per-scene optimizer 95% -> 77% filled at 64 drones); 0.2 s
+   keeps 96%.
+   Result: stable (gradient norm < 1 throughout, no collapse, full 3,000
+   iterations), 69% of slots filled on training shapes, 74% held out
+   (chamfer: 45% / 56%). See LOSS STUDY above.
+
+8. Pairings that flip.
+   Hungarian matching recomputed every optimizer iteration keeps flipping as
+   drones move, so matching (and laplacian, which uses it) fails on the
+   larger scenes even for the per-scene optimizer (14% filled at 64 drones);
+   with the pairing fixed from the start it fills 100%. Computing Sinkhorn's
+   transport plan on the final frame only (to make training 20x cheaper)
+   brought the same problem back (per-scene optimizer with a plan per frame:
+   100% at 16 drones, 83% at 64; with the final-frame plan: 12-66% on the
+   32-48-drone scenes).
+   Energy distance has no pairing at all, which is why it is the most robust.
+
+
 Next phases after that
 
 Phase 3, baseline comparison (the main result). Hungarian assignment plus straight or smooth paths, run through the same simulator with the same acceleration limit. Compare on shape error, slots filled, steps to form (first step where error drops below a threshold), collisions, and effort.

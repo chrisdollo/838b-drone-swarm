@@ -11,6 +11,7 @@ project-drone-swarm/
 │   ├── phase1.ipynb
 │   ├── phase2.ipynb          # one named experiment per run (v3)
 │   ├── phase2_compare.ipynb  # v2 vs v3 runs side by side
+│   ├── phase2_losses.ipynb   # loss study: five formation losses, geometric shapes
 │   ├── v3/                   # executed copy of phase2.ipynb for the v3 baseline run
 │   └── v2/                   # archived, executed v2 notebooks (read-only)
 ├── swarm/                    # the Python package: all core code
@@ -35,6 +36,8 @@ Everything is written in PyTorch so the whole rollout is differentiable. State t
 | `config.py` | Load `configs/default.yaml` with attribute access (`cfg.train.lr`) | 1 |
 | `sim.py` | Point-mass step; open-loop rollout (Phase 1); closed-loop rollout (Phase 2) | 1, 2 |
 | `shapes.py` | Basic target shapes and even sampling along polylines | 1 |
+| `formation_losses.py` | Formation losses for one slot per drone: chamfer, matching (Hungarian), sinkhorn (entropic OT), energy (MMD), laplacian (Quan et al.), dcd (tried), assigned (reference) | 2 |
+| `experiments.py` | Named experiment settings (config overrides) shared by notebooks and command-line runs, e.g. the loss study | 2 |
 | `metrics.py` | Slot metrics (one goal per drone): Hungarian matching, slots filled, slot error, steps to form, shared goals | 2 |
 | `losses.py` | Chamfer distance; shape, collision, effort and spacing (repulsion) terms, normalized by drone spacing; evenness metric | 1, 2 |
 | `plan.py` | Optimize a fixed acceleration plan for known scenes (toy optimization and per-scene optimum) | 1, 2 |
@@ -53,6 +56,7 @@ Controllers share one signature, `controller(pos, vel, Q, d_min) -> acc`, so the
 | --- | --- | --- |
 | `phase1.ipynb` | Simulator gradient check, shapes, Chamfer example, toy optimization, learning-rate comparison, fixed plan on new starts, text goals with one goal per drone | `results/gifs/phase1_circle.gif`, `results/gifs/phase1_text_<string>.gif`, `results/figures/phase1_*.png` |
 | `phase2.ipynb` | One named experiment (`EXPERIMENT`, or the env variable): benchmark, observation demo, training with early stopping, slot metrics per swarm size, GIFs incl. held-out strings, words and 128-drone demos | `runs/phase2_v3_<name>/`, `results/models/phase2_v3_<name>.pt`, `results/phase2_v3_<name>_scores.json`, `results/figures/phase2_v3_<name>_*.png`, `results/gifs/phase2_v3_<name>_*.gif` |
+| `phase2_losses.ipynb` | Loss study on geometric shapes: per-scene check of each loss, centralized reference (Hungarian once + plan), training, slot metrics per N, holding behavior (speed, goal switches), side-by-side GIFs | `runs/phase2_loss_<loss>/`, `results/models/phase2_loss_<loss>.pt`, `results/figures/phase2_losses_*.png`, `results/gifs/phase2_losses_*.gif`, `results/phase2_losses.json` |
 | `phase2_compare.ipynb` | v2 and v3 runs on identical v3 benchmark scenes | `results/figures/phase2_v3_compare_*.png`, `results/gifs/phase2_v3_compare_*.gif`, `results/phase2_v3_compare.json` |
 | `v2/` | The executed v2 notebooks, kept as a record (they need the v2 code, commit `35826a0`) | |
 
